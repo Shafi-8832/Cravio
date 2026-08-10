@@ -4,18 +4,23 @@ require('dotenv').config()
 require('./db/pool')
 
 const authRoutes = require('./routes/auth')
+const restaurantRoutes = require('./routes/restaurants')
 
 const app = express()
 const PORT = process.env.PORT || 8000
-.
+
 app.use(cors())
 app.use(express.json())
 
-// all auth routes will be prefixed with /api/auth
+// Routes
 app.use('/api/auth', authRoutes)
+app.use('/api/restaurants', restaurantRoutes)
 
+// Root route
 app.get('/', (req, res) => {
-  res.json({ message: 'Cravio API is running' })
+  res.json({
+    message: 'Cravio API is running'
+  })
 })
 
 app.listen(PORT, () => {

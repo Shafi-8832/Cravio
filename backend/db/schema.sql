@@ -4,8 +4,8 @@
 -- ============================================
 
 -- Drop everything and start fresh
-DROP TABLE IF EXISTS quality_flag_log, restaurant_review, 
-delivery, payment, order_items, orders, promo_codes, 
+DROP TABLE IF EXISTS quality_flag_log,restaurant_reviews, 
+deliveries, payments, order_items, orders, promo_codes, 
 cart_items, menu_items, menu_categories, restaurant_branches, 
 restaurants, customer_addresses, rider_profiles, users CASCADE;
 
