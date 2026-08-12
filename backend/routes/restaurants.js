@@ -13,30 +13,52 @@ const router = express.Router()
 // ============================================================
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        r.id,
-        r.name,
-        r.avg_rating,
+    const { area, city } = req.query
+
+    // 1. Base query (no WHERE clause yet)
+    let queryText = `
+      SELECT 
+        r.id, 
+        r.name, 
+        r.avg_rating, 
         r.created_at,
         u.name AS owner_name,
         COUNT(rb.id) AS branch_count
       FROM restaurants r
-      JOIN users u
-        ON r.owner_id = u.id
-      LEFT JOIN restaurant_branches rb
-        ON r.id = rb.restaurant_id
-      GROUP BY r.id, u.name
-      ORDER BY r.avg_rating DESC
-    `)
+      JOIN users u ON r.owner_id = u.id
+      LEFT JOIN restaurant_branches rb ON r.id = rb.restaurant_id
+    `
+    
+    const conditions = []
+    const values = []
 
+    // 2. Dynamically add conditions if the user provided them
+    if (area) {
+      values.push(`%${area}%`)
+      conditions.push(`rb.area ILIKE $${values.length}`) // $1
+    }
+
+    if (city) {
+      values.push(`%${city}%`)
+      conditions.push(`rb.city ILIKE $${values.length}`) // $2 (or $1 if no area)
+    }
+
+    // 3. Glue the WHERE clause to the base query if needed
+    if (conditions.length > 0) {
+      queryText += ` WHERE ` + conditions.join(' AND ')
+    }
+
+    // 4. Add the grouping and sorting at the very end
+    queryText += ` GROUP BY r.id, u.name ORDER BY r.avg_rating DESC`
+
+    const result = await pool.query(queryText, values)
+    
     res.json({
       restaurants: result.rows
     })
 
   } catch (error) {
     console.error('Get restaurants error:', error)
-
     res.status(500).json({
       error: 'Server error fetching restaurants.'
     })
