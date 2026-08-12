@@ -6,6 +6,8 @@ require('./db/pool')
 const authRoutes = require('./routes/auth')
 const restaurantRoutes = require('./routes/restaurants')
 
+const menuRoutes = require('./routes/menu') // Menu Routes
+
 const app = express()
 const PORT = process.env.PORT || 8000
 
@@ -15,6 +17,7 @@ app.use(express.json())
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/restaurants', restaurantRoutes)
+app.use('/api/menu', menuRoutes)
 
 // Root route
 app.get('/', (req, res) => {
