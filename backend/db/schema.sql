@@ -3,8 +3,8 @@
 -- Final Version | PostgreSQL 16
 -- ============================================
 
--- Drop everything and start fresh
-DROP TABLE IF EXISTS quality_flag_log,restaurant_reviews, 
+-- 
+DROP TABLE IF EXISTS quality_flag_log, restaurant_reviews, 
 deliveries, payments, order_items, orders, promo_codes, 
 cart_items, menu_items, menu_categories, restaurant_branches, 
 restaurants, customer_addresses, rider_profiles, users CASCADE;
@@ -21,7 +21,7 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. RIDER_PROFILE
+-- 2. RIDER_PROFILE // ** Rider's Address Attribute?
 CREATE TABLE rider_profiles (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE UNIQUE,
@@ -170,3 +170,23 @@ CREATE TABLE quality_flag_log (
     order_id INTEGER REFERENCES orders(id),
     flagged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+/*
+CREATE TABLE IF NOT EXISTS modifier_groups (
+    id SERIAL PRIMARY KEY,
+    menu_item_id INT REFERENCES menu_items(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    is_required BOOLEAN DEFAULT false,
+    max_selection INT DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS modifier_options (
+    id SERIAL PRIMARY KEY,
+    modifier_group_id INT REFERENCES modifier_groups(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    price_modifier DECIMAL(10, 2) DEFAULT 0.00,
+    is_available BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+*/

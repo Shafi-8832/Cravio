@@ -12,7 +12,7 @@ const router = express.Router()
 // Returns restaurant + categories + menu items
 // ============================================================
 router.get('/restaurants/:restaurantId', async (req, res) => {
-  const { restaurantId } = req.params
+  const { restaurantId } = req.params // fetch the restaurant ID from the browsers URL
 
   try {
     // Check that restaurant exists
@@ -59,13 +59,44 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
       ORDER BY name
     `, [restaurantId])
 
-    // Put items inside their respective categories
+    // Put items inside their respective categories // can be done through SQL ? **
     const categories = categoriesResult.rows.map(category => ({
       ...category,
       items: itemsResult.rows.filter(
         item => item.category_id === category.id
       )
     }))
+
+  //   const result = await pool.query(`
+  //   SELECT 
+  //     c.id,
+  //     c.name,
+  //     COALESCE(
+  //       json_agg(
+  //         json_build_object(
+  //           'id', i.id,
+  //           'category_id', i.category_id,
+  //           'name', i.name,
+  //           'description', i.description,
+  //           'price', i.price,
+  //           'image_url', i.image_url,
+  //           'is_available', i.is_available,
+  //           'is_veg', i.is_veg,
+  //           'quality_flag', i.quality_flag,
+  //           'created_at', i.created_at
+  //         ) ORDER BY i.name
+  //       ) FILTER (WHERE i.id IS NOT NULL), 
+  //       '[]' // --> fallback : empty array
+  //     ) AS items
+  //   FROM menu_categories c
+  //   LEFT JOIN menu_items i ON c.id = i.category_id
+  //   WHERE c.restaurant_id = $1
+  //   GROUP BY c.id, c.name
+  //   ORDER BY c.name;
+  // `, [restaurantId]);
+
+  // const categories = result.rows;
+
 
     res.json({
       restaurant: restaurantResult.rows[0],
@@ -87,13 +118,13 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
 // restaurant_owner or admin only
 // Creates a menu category
 // ============================================================
-router.post(
+router.post( // every HTTP call needs to be verified.
   '/restaurants/:restaurantId/categories',
   authenticateToken,
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { restaurantId } = req.params
+    const { restaurantId } = req.params // fetch the ID from the browser URL
     const { name } = req.body
 
     if (!name || !name.trim()) {
@@ -194,6 +225,15 @@ router.post(
 
     try {
       // Find category, restaurant, and owner together
+
+      // SQL NOTE ** : this is a MANY JOIN 1 scenario
+      // the frontend is only sending the category ID
+      // so in menu_category table (id, restaurant_id, name)
+      // from the cat_id == menu_cat.id, grab the restaurant_id
+      // go to the restaurant table with this restaurant_id
+      // fetch the owner_id of that restaurant
+      // check whether the fetched owner_id matches the id sent by frontend 
+      // if matches, the request is safe, otherwise not
       const categoryResult = await pool.query(`
         SELECT
           mc.id,
@@ -237,7 +277,7 @@ router.post(
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `, [
-        categoryId,
+        categoryId, // or you can write category.id 
         category.restaurant_id,
         name.trim(),
         description || null,
@@ -292,8 +332,16 @@ router.patch(
       })
     }
 
-    try {
+    try { // ? menu_category + restaurant + menu_items --> 3 relationships or trinary relationship? which is better?
       // Find item + restaurant owner
+
+
+      // SQL NOTE ** : menu_items has restaurant_id
+      // so join restaurant table USING (restaurant_id)
+      // after join, you will have the owner_id available in the merged table
+      // fetch the owner_id, match it with the owner_id sent from the frontend
+      // if matches, safe. otherwise reject
+
       const itemResult = await pool.query(`
         SELECT
           mi.id,
@@ -322,6 +370,10 @@ router.patch(
         })
       }
 
+      // SQL NOTE ** : COALESCE(value1, value2, value3, ......, fall_back) reads data from left to right, returns the first NOT NULL value
+      // so if the user left the name field blank then JS passes NULL to $1
+      // so the previous name stays
+
       const result = await pool.query(`
         UPDATE menu_items
         SET
@@ -331,7 +383,7 @@ router.patch(
           image_url = COALESCE($4, image_url),
           is_veg = COALESCE($5, is_veg)
         WHERE id = $6
-        RETURNING *
+        RETURNING * 
       `, [
         name !== undefined ? name.trim() : null,
         description !== undefined ? description : null,
@@ -341,8 +393,8 @@ router.patch(
         itemId
       ])
 
-      res.json({
-        item: result.rows[0]
+      res.json({ // send the 
+        item: result.rows[0] // Frontend needs to instantly reflects the changes
       })
 
     } catch (error) {
@@ -370,6 +422,13 @@ router.patch(
     const { itemId } = req.params
 
     try {
+
+      // the API request PATCH from frontend did not contain owner_id
+      // we need to find it ourselves
+      // join menu_items with restaurants using PK & FK
+      // fetch the owner_id by the itemID
+      // if the id from frontend matches the owner_id from db --> safe
+
       const itemResult = await pool.query(`
         SELECT
           mi.id,
@@ -397,6 +456,7 @@ router.patch(
         })
       }
 
+      // SQL NOTE ** : ezzy
       const result = await pool.query(`
         UPDATE menu_items
         SET is_available = NOT is_available
@@ -408,7 +468,7 @@ router.patch(
       `, [itemId])
 
       res.json({
-        item: result.rows[0],
+        item: result.rows[0], // nested JSON object
         message: `Item is now ${
           result.rows[0].is_available
             ? 'available'

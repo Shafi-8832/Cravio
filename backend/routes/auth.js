@@ -1,7 +1,7 @@
 const express = require('express')
-const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
-const pool = require('../db/pool')
+const bcrypt = require('bcryptjs') // pull out the downloaded password hashing rulebooks
+const jwt = require('jsonwebtoken') // pull our jwt rulebook
+const pool = require('../db/pool') // access the pool of db connections
 
 const router = express.Router()
 
@@ -21,7 +21,7 @@ router.post('/signup', async (req, res) => {
   const allowedRoles = [
     'customer',
     'restaurant_owner',
-    'rider'
+    'rider' // no admin cause 
   ]
 
   if (!allowedRoles.includes(role)) {
@@ -36,7 +36,7 @@ router.post('/signup', async (req, res) => {
     await client.query('BEGIN')
 
     const existingUser = await client.query(
-      'SELECT id FROM users WHERE email = $1',
+      'SELECT id FROM users WHERE email = $1', // SQL injection prevention
       [email]
     )
 
