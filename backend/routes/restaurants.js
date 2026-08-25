@@ -158,7 +158,7 @@ router.post(
       })
     }
 
-    const client = await pool.connect()
+    const client = await pool.connect() // dedicated connection only to handle db transactions
 
     try {
       await client.query('BEGIN')
