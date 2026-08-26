@@ -19,8 +19,7 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
     const restaurantResult = await pool.query(`
       SELECT
         id,
-        name,
-        avg_rating
+        name
       FROM restaurants
       WHERE id = $1
     `, [restaurantId])

@@ -1,0 +1,11 @@
+$kind: http-request
+name: localhost:8000/api/restaurants
+description: ""
+url: localhost:8000/api/restaurants
+method: POST
+body:
+  type: json
+  content: ""
+auth:
+  type: bearer
+order: 1787635596991

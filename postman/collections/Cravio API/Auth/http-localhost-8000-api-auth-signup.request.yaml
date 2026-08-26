@@ -1,0 +1,16 @@
+$kind: http-request
+name: http://localhost:8000/api/auth/signup
+description: ""
+url: http://localhost:8000/api/auth/signup
+method: POST
+body:
+  type: json
+  content: |-
+    {
+      "name": "Ahnaf Shafi",
+      "email": "shafi@test.com",
+      "password": "password123",
+      "role": "customer",
+      "phone": "01700000000"
+    }
+order: 1787636171044

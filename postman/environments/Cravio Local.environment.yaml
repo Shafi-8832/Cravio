@@ -1,0 +1,7 @@
+name: Cravio Local
+values:
+  - key: base_url
+    value: ''
+  - key: token
+    value: ''
+color: 0

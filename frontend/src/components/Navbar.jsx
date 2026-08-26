@@ -7,6 +7,8 @@ import CartDrawer from './CartDrawer' // NEW: the slide-over panel component
 const Navbar = () => {
   const { user, logout } = useAuth()               // current user + logout function
   const { itemCount } = useCart()                   // NEW: how many items are in the cart
+
+  const canUseCart = user?.role === 'customer'
   const [isCartOpen, setIsCartOpen] = useState(false) // NEW: drawer open/closed state
   const navigate = useNavigate()                     // lets us redirect after logout
 
@@ -36,21 +38,23 @@ const Navbar = () => {
             </span>
 
             {/* NEW: cart button, opens the CartDrawer */}
-            <button
-              onClick={() => setIsCartOpen(true)} // flip drawer open
-              className="relative bg-green-800 hover:bg-green-900 transition-colors
-                         w-9 h-9 rounded-full flex items-center justify-center"
-            >
-              🛒
-              {itemCount > 0 && (
-                // small red badge showing how many items are in the cart
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white
-                                  text-[10px] font-bold rounded-full w-5 h-5
-                                  flex items-center justify-center">
-                  {itemCount}
-                </span>
-              )}
-            </button>
+            { canUseCart && ( 
+              <button
+                onClick={() => setIsCartOpen(true)} // flip drawer open
+                className="relative bg-green-800 hover:bg-green-900 transition-colors
+                          w-9 h-9 rounded-full flex items-center justify-center"
+              >
+                🛒
+                {itemCount > 0 && (
+                  // small red badge showing how many items are in the cart
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white
+                                    text-[10px] font-bold rounded-full w-5 h-5
+                                    flex items-center justify-center">
+                    {itemCount}
+                  </span>
+                )}
+              </button>)
+            }
 
             <button
               onClick={handleLogout}

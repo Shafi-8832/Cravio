@@ -165,8 +165,8 @@ CREATE TABLE restaurants (
     name VARCHAR(100)
         NOT NULL,
 
-    avg_rating DECIMAL(2,1)
-        DEFAULT 0.0,
+    -- avg_rating DECIMAL(2,1)
+    --     DEFAULT 0.0,
 
     created_at TIMESTAMP
         DEFAULT CURRENT_TIMESTAMP
@@ -584,12 +584,12 @@ CREATE TABLE restaurant_reviews (
         UNIQUE,
 
 
-    customer_id INTEGER
-        REFERENCES users(id),
+    -- customer_id INTEGER
+    --     REFERENCES users(id),
 
 
-    restaurant_id INTEGER
-        REFERENCES restaurants(id),
+    -- restaurant_id INTEGER
+    --     REFERENCES restaurants(id),
 
 
     rating INTEGER

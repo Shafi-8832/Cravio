@@ -33,7 +33,7 @@ const RestaurantCard = ({ restaurant }) => {
           </span>
         </div>
 
-        <StarRating rating={restaurant.avg_rating} />
+        <StarRating rating={0} />
 
         <div className="flex items-center justify-between mt-3 
                         text-sm text-gray-500">

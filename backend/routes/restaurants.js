@@ -20,7 +20,6 @@ router.get('/', async (req, res) => {
       SELECT 
         r.id, 
         r.name, 
-        r.avg_rating, 
         r.created_at,
         u.name AS owner_name,
         COUNT(rb.id) AS branch_count
@@ -49,7 +48,7 @@ router.get('/', async (req, res) => {
     }
 
     // 4. Add the grouping and sorting at the very end
-    queryText += ` GROUP BY r.id, u.name ORDER BY r.avg_rating DESC`
+    queryText += ` GROUP BY r.id, u.name ORDER BY r.name ASC`
 
     const result = await pool.query(queryText, values)
     
@@ -79,7 +78,6 @@ router.get('/:id', async (req, res) => {
       SELECT
         r.id,
         r.name,
-        r.avg_rating,
         r.created_at,
         u.name AS owner_name,
         u.phone AS owner_phone
@@ -166,7 +164,7 @@ router.post(
       const result = await client.query(`
         INSERT INTO restaurants (owner_id, name)
         VALUES ($1, $2)
-        RETURNING id, name, avg_rating, created_at
+        RETURNING id, name, created_at
       `, [req.user.id, name])
 
       await client.query('COMMIT')

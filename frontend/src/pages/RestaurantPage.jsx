@@ -3,13 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom'
 import StarRating from '../components/StarRating'
 import LoadingSpinner from '../components/LoadingSpinner'
 import { useCart } from '../context/CartContext' // NEW: to add items to the cart
+import { useAuth } from '../context/AuthContext'
 import api from '../utils/api'
 
 const RestaurantPage = () => {
   const { id } = useParams()       // reads :id from the URL, e.g. /restaurants/5 -> "5"
   const navigate = useNavigate()
-  const { addItem } = useCart()    // NEW: pull the addItem function out of cart context
+  const { addItem, fetchCart } = useCart()    // NEW: pull the addItem function out of cart context
 
+  const { user } = useAuth()
   const [restaurant, setRestaurant] = useState(null) // restaurant header + branches
   const [menu, setMenu] = useState([])                // NEW: categories WITH their items
   const [loading, setLoading] = useState(true)
@@ -25,6 +27,16 @@ const RestaurantPage = () => {
         ])
         setRestaurant(restaurantRes.data.restaurant) // store restaurant details
         setMenu(menuRes.data.categories)              // NEW: store categories (each has an `items` array)
+                
+        if(user?.role === 'customer'){
+            await fetchCart(
+                id,
+                {
+                    id: restaurantRes.data.restaurant.id,
+                    name: restaurantRes.data.restaurant.name
+                }
+            )
+        }
       } catch (err) {
         if (err.response?.status === 404) {
           setError('Restaurant not found.')
@@ -89,7 +101,7 @@ const RestaurantPage = () => {
               <h1 className="text-3xl font-bold text-gray-800 mb-2">
                 {restaurant.name}
               </h1>
-              <StarRating rating={restaurant.avg_rating} />
+              <StarRating rating={0} />
               <p className="text-gray-500 text-sm mt-2">
                 Owner: {restaurant.owner_name}
               </p>
@@ -196,7 +208,7 @@ const RestaurantPage = () => {
                       </div>
 
                       {/* Add button — disabled if the owner marked it unavailable */}
-                      <button
+                      {user?.role === 'customer' && (<button
                         onClick={() => handleAddToCart(item)}
                         disabled={!item.is_available}
                         className="bg-green-700 text-white px-4 py-2 rounded-lg
@@ -205,7 +217,8 @@ const RestaurantPage = () => {
                                    disabled:cursor-not-allowed disabled:hover:bg-green-700"
                       >
                         {item.is_available ? 'Add' : 'Unavailable'}
-                      </button>
+                      </button>)}
+
                     </div>
                   ))}
                 </div>

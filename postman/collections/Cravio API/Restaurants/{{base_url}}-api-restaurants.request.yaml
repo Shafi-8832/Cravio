@@ -1,0 +1,9 @@
+$kind: http-request
+name: "{{base_url}}/api/restaurants"
+description: ""
+url: "{{base_url}}/api/restaurants"
+method: GET
+body:
+  type: json
+  content: ""
+order: 1787636334532

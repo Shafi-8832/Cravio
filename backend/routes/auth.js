@@ -91,7 +91,7 @@ router.post('/signup', async (req, res) => {
 
     await client.query('COMMIT')
 
-    const token = jwt.sign(
+    const token = jwt.sign( // *****
       {
         id: user.id,
         email: user.email,
@@ -103,7 +103,7 @@ router.post('/signup', async (req, res) => {
       }
     )
 
-    res.status(201).json({
+    res.status(201).json({ // **** is this accesible by other routes/files? or is this sent straight to frontend?
       token,
       user
     })
