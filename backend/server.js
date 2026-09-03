@@ -9,6 +9,7 @@ const restaurantRoutes = require('./routes/restaurants')
 const cartRoutes = require('./routes/cart')
 
 const menuRoutes = require('./routes/menu') // Menu Routes
+const orderRoutes = require('./routes/orders') // Order Routes
 
 const app = express()
 const PORT = process.env.PORT || 8000
@@ -30,6 +31,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/restaurants', restaurantRoutes)
 app.use('/api/menu', menuRoutes)
 app.use('/api/cart', cartRoutes)
+app.use('/api/orders', orderRoutes)
 
 // Root route
 app.get('/', (req, res) => {

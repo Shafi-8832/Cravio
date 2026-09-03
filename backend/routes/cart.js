@@ -19,7 +19,7 @@ router.get(
   requireRole('customer'),
   async (req, res) => {
 
-    const { restaurantId } = req.params
+    const restaurantId = Number(req.params.restaurantId)
     const userId = req.user.id
 
     /*  INNER JOIN ব্যবহার করলে
@@ -108,22 +108,38 @@ router.post(
   requireRole('customer'),
   async (req,res)=>{
 
-    const { restaurantId } = req.params
+    const restaurantId = Number(req.params.restaurantId)
 
     const userId = req.user.id
 
 
-    const {
-      menu_item_id,
-      quantity
-    } = req.body
+    const menuItemId = Number(req.body.menu_item_id)
+    const quantity = Number(req.body.quantity)
 
 
 
-    if(!menu_item_id || !quantity){
+    if (!Number.isInteger(restaurantId) || restaurantId <= 0) {
 
       return res.status(400).json({
-        error:'Menu item and quantity are required.'
+        error: 'Invalid restaurant ID.'
+      })
+
+    }
+
+
+    if (!Number.isInteger(menuItemId) || menuItemId <= 0) {
+
+      return res.status(400).json({
+        error: 'Invalid menu item ID.'
+      })
+
+    }
+
+
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+
+      return res.status(400).json({
+        error: 'Quantity must be a positive integer.'
       })
 
     }
@@ -136,6 +152,53 @@ router.post(
 
 
       await client.query('BEGIN')
+
+
+      // =====================================================
+      // Validate that the item belongs to this restaurant
+      // and can currently be ordered
+      // =====================================================
+
+      const menuItemResult = await client.query(`
+        SELECT
+          id,
+          restaurant_id,
+          is_available
+        FROM menu_items
+        WHERE id = $1
+      `, [menuItemId])
+
+
+      if (menuItemResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
+        return res.status(404).json({
+          error: 'Menu item not found.'
+        })
+      }
+
+
+      const menuItem = menuItemResult.rows[0]
+
+
+      if (menuItem.restaurant_id !== restaurantId) {
+        await client.query('ROLLBACK')
+
+        return res.status(400).json({
+          error: 'Menu item does not belong to this restaurant.',
+          code: 'ITEM_RESTAURANT_MISMATCH'
+        })
+      }
+
+
+      if (!menuItem.is_available) {
+        await client.query('ROLLBACK')
+
+        return res.status(409).json({
+          error: 'Menu item is currently unavailable.',
+          code: 'MENU_ITEM_UNAVAILABLE'
+        })
+      }
 
 
 
@@ -229,7 +292,7 @@ router.post(
 
       `,[
         cartId,
-        menu_item_id,
+        menuItemId,
         quantity
       ])
 
