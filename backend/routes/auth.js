@@ -220,15 +220,29 @@ router.post('/login', async (req, res) => {
 router.post('/logout', authenticateToken, async (req, res) => {
   // Implementation for logout functionality
   try {
-    await pool.query(
-      `INSERT INTO revoked_tokens (jti, user_id, expires_at)
-      VALUES ($1, $2, to_timestamp($3))`,
-      [
-        req.user.jti,
-        req.user.id,
-        req.user.exp // store the expiration time of the token
-      ]
-    )
+      await pool.query(
+        `
+        INSERT INTO revoked_tokens
+        (
+          jti,
+          user_id,
+          expires_at
+        )
+
+        VALUES
+        (
+          $1,
+          $2,
+          to_timestamp($3)
+        )
+        `,
+        [
+          req.user.jti,
+          req.user.id,
+          req.user.exp
+        ]
+      )
+
 
     res.json({message : "Logged out successfully."})
     

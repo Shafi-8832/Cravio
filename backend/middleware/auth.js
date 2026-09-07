@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken')
+const pool = require('../db/pool') // access the pool of db connections
 
 // jwt is stateless, meaning the server never needs to check DB to validate token
 // the server only does mathematical operations to verify the token's signature and expiration date

@@ -29,13 +29,25 @@ const RestaurantPage = () => {
         setMenu(menuRes.data.categories)              // NEW: store categories (each has an `items` array)
                 
         if(user?.role === 'customer'){
-            await fetchCart(
-                id,
-                {
-                    id: restaurantRes.data.restaurant.id,
-                    name: restaurantRes.data.restaurant.name
-                }
-            )
+            try{
+
+                await fetchCart(
+                    id,
+                    {
+                        id: restaurantRes.data.restaurant.id,
+                        name: restaurantRes.data.restaurant.name
+                    }
+                )
+
+            }
+            catch(cartError){
+
+                console.error(
+                    "Cart loading failed:",
+                    cartError
+                )
+
+            }
         }
       } catch (err) {
         if (err.response?.status === 404) {
