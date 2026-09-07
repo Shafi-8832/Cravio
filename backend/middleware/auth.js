@@ -1,6 +1,11 @@
 const jwt = require('jsonwebtoken')
 
-const authenticateToken = (req, res, next) => {
+// jwt is stateless, meaning the server never needs to check DB to validate token
+// the server only does mathematical operations to verify the token's signature and expiration date
+// it doesn't need to lookup the user in the database, which makes it fast and efficient
+// adding a blocklist is semistateful
+
+const authenticateToken = async (req, res, next) => {
   // Read the Authorization header sent from Postman/frontend
   const authHeader = req.headers.authorization
 
@@ -34,9 +39,19 @@ const authenticateToken = (req, res, next) => {
       process.env.JWT_SECRET
     )
 
+    const revoked = await pool.query(
+      `SELECT id FROM revoked_tokens WHERE jti = $1`,
+      [decoded.jti]
+    )
+
+    if (revoked.rows.length > 0) {
+      return res.status(401).json({ error : "Token has been revoked. Please log in again."})
+    }
+
     // VERY IMPORTANT:
-    // Make logged-in user's data available to later middleware
-    req.user = decoded
+    // Make logged-in user's data available to later middleware **
+
+    req.user = decoded // creating a user field on the request object, basically attaching the authenticated user's info to the request object so that it can be accessed in subsequent middleware or route handlers
 
     console.log('Authenticated user:', req.user)
 

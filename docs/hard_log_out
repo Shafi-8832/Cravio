@@ -1,0 +1,16 @@
+// schema.sql -- added user_sessions table
+
+
+// routes/auth.js
+// middleware/auth.js
+// server.js
+
+
+// frontend
+// frontend/src/context/AuthContext.jsx
+// frontend/src/context/Login.jsx
+// frontend/src/context/Signup.jsx
+// frontend/src/components/NavBar.jsx
+
+
+

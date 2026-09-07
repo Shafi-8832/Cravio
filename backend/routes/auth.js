@@ -1,9 +1,15 @@
 const express = require('express')
 const bcrypt = require('bcryptjs') // pull out the downloaded password hashing rulebooks
-const jwt = require('jsonwebtoken') // pull our jwt rulebook
+const jwt = require('jsonwebtoken') // pull out jwt rulebook
 const pool = require('../db/pool') // access the pool of db connections
 
+const crypto = require('crypto') // for generating unique token IDs (jti)
+const authenticateToken = require('../middleware/auth')
+
 const router = express.Router()
+
+// routes/auth.js is the only file that creates a JWT token
+
 
 // ============================================================
 // SIGNUP
@@ -21,7 +27,7 @@ router.post('/signup', async (req, res) => {
   const allowedRoles = [
     'customer',
     'restaurant_owner',
-    'rider' // no admin cause 
+    'rider' // no admin cause admin's are created manually by the dev team, no auth/signup/admin route for security reasons
   ]
 
   if (!allowedRoles.includes(role)) {
@@ -30,7 +36,16 @@ router.post('/signup', async (req, res) => {
     })
   }
 
-  const client = await pool.connect()
+  const client = await pool.connect() // one dedicated connection to the db for this signup request
+  // We use a transaction to ensure that either both the user and rider profile are created, or neither is created.
+
+  // when we write BEGIN, the db creates a private workspace for this connection, 
+  // and all the queries we run after that are private to this connection until we either COMMIT or ROLLBACK.
+  // if another connection tries to write, then it will be blocked until we COMMIT or ROLLBACK.
+
+  // If we COMMIT, then all the changes we made in this private workspace are made public to all other connections.
+  // If we ROLLBACK, then all the changes we made in this private workspace are discarded, and the db goes back to the state it was in before we ran BEGIN.
+
 
   try {
     await client.query('BEGIN')
@@ -50,7 +65,7 @@ router.post('/signup', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10)
 
-    const result = await client.query(
+    const result = await client.query( // parameterized query to prevent SQL injection
       `
         INSERT INTO users
           (name, email, password, role, phone)
@@ -91,16 +106,18 @@ router.post('/signup', async (req, res) => {
 
     await client.query('COMMIT')
 
-    const token = jwt.sign( // *****
+    const jti = crypto.randomBytes(16).toString('hex') // generate a unique token ID for this session
+
+
+    const token = jwt.sign( // ***** F(header, payload, secret, options) = header.payload.signature
       {
         id: user.id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        jti // include the unique token ID in the payload
       },
       process.env.JWT_SECRET,
-      {
-        expiresIn: '7d'
-      }
+      {expiresIn: '7d'}
     )
 
     res.status(201).json({ // **** is this accesible by other routes/files? or is this sent straight to frontend?
@@ -144,7 +161,7 @@ router.post('/login', async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(401).json({
-        error: 'Invalid email or password.'
+        error: 'Invalid email or password.' // never reveal whether the email or password is wrong, for security reasons
       })
     }
 
@@ -157,15 +174,18 @@ router.post('/login', async (req, res) => {
 
     if (!validPassword) {
       return res.status(401).json({
-        error: 'Invalid email or password.'
+        error: 'Invalid email or password.' // never reveal whether the email or password is wrong, for security reasons
       })
     }
+
+    const jti = crypto.randomBytes(16).toString('hex') // generate a unique token ID for this session
 
     const token = jwt.sign(
       {
         id: user.id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        jti // include the unique token ID in the payload
       },
       process.env.JWT_SECRET,
       {
@@ -173,7 +193,7 @@ router.post('/login', async (req, res) => {
       }
     )
 
-    const {
+    const { // never send the password back to the frontend, even if it's hashed
       password: _,
       ...userWithoutPassword
     } = user
@@ -190,6 +210,36 @@ router.post('/login', async (req, res) => {
       error: 'Server error during login.'
     })
   }
+})
+
+
+// ============================================================
+// LOGOUT
+// POST /api/auth/logout
+// ============================================================
+router.post('/logout', authenticateToken, async (req, res) => {
+  // Implementation for logout functionality
+  try {
+    await pool.query(
+      `INSERT INTO revoked_tokens (jti, user_id, expires_at)
+      VALUES ($1, $2, to_timestamp($3))`,
+      [
+        req.user.jti,
+        req.user.id,
+        req.user.exp // store the expiration time of the token
+      ]
+    )
+
+    res.json({message : "Logged out successfully."})
+    
+  } catch (error) {
+    console.error('Logout error:', error)
+
+    res.status(500).json({
+      error: 'Server error during logout.'
+    })
+  }
+
 })
 
 module.exports = router

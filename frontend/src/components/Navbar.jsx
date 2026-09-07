@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCart } from '../context/CartContext' // NEW: read cart item count
 import CartDrawer from './CartDrawer' // NEW: the slide-over panel component
+import Api from '../utils/api' // NEW: for logout API call
 
 const Navbar = () => {
   const { user, logout } = useAuth()               // current user + logout function
@@ -12,8 +13,8 @@ const Navbar = () => {
   const [isCartOpen, setIsCartOpen] = useState(false) // NEW: drawer open/closed state
   const navigate = useNavigate()                     // lets us redirect after logout
 
-  const handleLogout = () => {
-    logout()            // clear auth state + localStorage
+  const handleLogout = async () => {
+    await logout()            // clear auth state + localStorage
     navigate('/login')  // send the user to the login page
   }
 

@@ -36,7 +36,8 @@ DROP TABLE IF EXISTS
     customer_addresses,
     rider_profiles,
 
-    users
+    users,
+    user_sessions
 
 CASCADE;
 
@@ -76,6 +77,7 @@ CREATE TABLE users (
     created_at TIMESTAMP
         DEFAULT CURRENT_TIMESTAMP
 );
+
 
 
 
@@ -727,3 +729,23 @@ CREATE TABLE cart_item_modifiers (
 
     UNIQUE(cart_item_id, modifier_option_id)
 );
+
+
+
+-- ============================================================
+-- 20. USER SESSIONS
+-- ============================================================
+
+CREATE TABLE revoked_tokens (
+
+    id SERIAL PRIMARY KEY,
+
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+
+    jti VARCHAR(255) NOT NULL UNIQUE,
+
+    expires_at TIMESTAMP NOT NULL,
+
+    revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+

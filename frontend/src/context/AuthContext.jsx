@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 // removed the unused/incorrect `Children` import--> not needed
+import api from '../utils/api' // for logout API call
 
 // global context object — components subscribe to this instead of
 // passing user/login/logout down through props at every level
@@ -24,10 +25,16 @@ export const AuthProvider = ({ children }) => {
     setUser(userData)                                        // update React state so the UI re-renders
   }
 
-  const logout = () => {
-    localStorage.removeItem('token') // remove the saved JWT
-    localStorage.removeItem('user')  // FIX: pass the string 'user' (the key), not the `user` variable
-    setUser(null)                    // clear React state so the UI re-renders as logged out
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout') // tell the backend to revoke the token
+    } catch (error) {
+      console.error('Logout error:', error)
+    } finally {
+      localStorage.removeItem('token') // remove the JWT from localStorage
+      localStorage.removeItem('user')  // remove the user data from localStorage
+      setUser(null)                    // update React state so the UI re-renders
+    }
   }
 
   return (
