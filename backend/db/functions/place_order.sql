@@ -45,6 +45,8 @@ DECLARE
     v_discount DECIMAL(10,2) := 0.00;
     v_total DECIMAL(10,2);
     v_promo promo_codes%ROWTYPE;
+    v_cart_item RECORD;
+    v_order_item_id INTEGER;
 BEGIN
 
     -- SETUP && VALIDATION
@@ -141,12 +143,37 @@ BEGIN
         RAISE EXCEPTION 'CART_CONTAINS_UNAVAILABLE_ITEM';
     END IF;
 
+    -- A modifier can be switched off between adding to the cart and checking
+    -- out, exactly like the menu item itself. Same rule, one level down.
+    IF EXISTS (
+        SELECT 1
+        FROM cart_items ci
+        JOIN cart_item_modifiers cim ON cim.cart_item_id = ci.id
+        JOIN modifier_options mo ON mo.id = cim.modifier_option_id
+        WHERE ci.cart_id = v_cart_id
+          AND mo.is_available = false
+    ) THEN
+        RAISE EXCEPTION 'CART_CONTAINS_UNAVAILABLE_MODIFIER';
+    END IF;
+
     -- Never accept subtotal/total from the client. Current menu prices are
     -- recalculated while the transaction owns the cart lock.
-    SELECT ROUND(SUM(mi.price * ci.quantity), 2)
+    --
+    -- The price of one unit is the menu price PLUS its chosen modifiers, so
+    -- the modifiers are summed per cart line first and only then multiplied by
+    -- the quantity. Summing them in the outer query instead would multiply the
+    -- base price once per modifier row and silently overcharge every item that
+    -- has more than one.
+    SELECT ROUND(SUM((mi.price + line.modifier_total) * ci.quantity), 2)
     INTO v_subtotal
     FROM cart_items ci
     JOIN menu_items mi ON mi.id = ci.menu_item_id
+    CROSS JOIN LATERAL (
+        SELECT COALESCE(SUM(mo.price_modifier), 0.00) AS modifier_total
+        FROM cart_item_modifiers cim
+        JOIN modifier_options mo ON mo.id = cim.modifier_option_id
+        WHERE cim.cart_item_id = ci.id
+    ) AS line
     WHERE ci.cart_id = v_cart_id;
 
     IF v_subtotal IS NULL OR v_subtotal <= 0 THEN
@@ -235,24 +262,63 @@ BEGIN
     RETURNING id INTO v_order_id;
 
     -- unit_price is a historical price snapshot. Later menu price changes do not change an already-created order.
-    INSERT INTO order_items (
-        order_id,
-        menu_item_id,
-        quantity,
-        unit_price -- explain this line? This line records the price of the menu item at the time of order, so that if the menu price changes later, the order still reflects the original price.
-    )
-    SELECT -- what is the work of this SELECT statement? 
-    -- This SELECT statement retrieves the menu item IDs, quantities, and prices from the cart_items table for the given cart ID, and inserts them into the order_items table along with the order ID. It effectively transfers the items from the cart to the order while preserving their prices at the time of checkout.
-    -- whatever is selected here is inserted up into order_items
+    --
+    -- This is a LOOP rather than one INSERT ... SELECT because each order_item
+    -- may carry its own modifiers, and inserting them requires knowing the id
+    -- of the order_item row that was just created. A set-based insert cannot
+    -- give us that mapping: now that modifiers exist, the same menu_item_id can
+    -- legitimately appear on several lines of one order ("Margherita + extra
+    -- cheese" and "Margherita, plain"), so RETURNING menu_item_id would not
+    -- identify which line is which.
+    --
+    -- unit_price stays the BASE menu price. The modifier deltas live in
+    -- order_item_modifiers with their own snapshot, so a line's true cost is
+    -- (unit_price + SUM(price_modifier)) * quantity — the same shape the cart
+    -- and the subtotal above use.
+    FOR v_cart_item IN
+        SELECT
+            ci.id AS cart_item_id,
+            ci.menu_item_id,
+            ci.quantity,
+            mi.price
+        FROM cart_items ci
+        JOIN menu_items mi ON mi.id = ci.menu_item_id
+        WHERE ci.cart_id = v_cart_id -- don't get confused about v_cart_id, we have already found the cart_id before and put it in v_cart_id, now we are just reusing the variable
+        ORDER BY ci.id
+    LOOP
 
-        v_order_id,
-        ci.menu_item_id,
-        ci.quantity,
-        mi.price
-    FROM cart_items ci
-    JOIN menu_items mi ON mi.id = ci.menu_item_id
-    WHERE ci.cart_id = v_cart_id -- don't get confused about v_cart_id, we have already found the cart_id before and put it in v_cart_id, now we are just reusing the variable
-    ORDER BY ci.id;
+        INSERT INTO order_items (
+            order_id,
+            menu_item_id,
+            quantity,
+            unit_price -- records the price of the menu item at the time of order, so that if the menu price changes later, the order still reflects the original price.
+        )
+        VALUES (
+            v_order_id,
+            v_cart_item.menu_item_id,
+            v_cart_item.quantity,
+            v_cart_item.price
+        )
+        RETURNING id INTO v_order_item_id;
+
+        -- name and price_modifier are copied, not referenced, so renaming or
+        -- re-pricing the option later cannot rewrite this order.
+        INSERT INTO order_item_modifiers (
+            order_item_id,
+            modifier_option_id,
+            name,
+            price_modifier
+        )
+        SELECT
+            v_order_item_id,
+            mo.id,
+            mo.name,
+            mo.price_modifier
+        FROM cart_item_modifiers cim
+        JOIN modifier_options mo ON mo.id = cim.modifier_option_id
+        WHERE cim.cart_item_id = v_cart_item.cart_item_id;
+
+    END LOOP;
 
     -- Online methods are recorded as unpaid until a trusted payment callback
     -- verifies them. The client is never allowed to declare a payment "paid".

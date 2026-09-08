@@ -65,12 +65,74 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
       ORDER BY name
     `, [restaurantId])
 
+    // Get every modifier group + option for this restaurant in one query.
+    // Fetching per item would mean one round trip per dish; this is a single
+    // pass that the loop below slices up in memory.
+    const modifiersResult = await pool.query(`
+      SELECT
+        mg.id AS group_id,
+        mg.menu_item_id,
+        mg.name AS group_name,
+        mg.is_required,
+        mg.min_selection,
+        mg.max_selection,
+        mo.id AS option_id,
+        mo.name AS option_name,
+        mo.price_modifier,
+        mo.is_available AS option_is_available
+      FROM modifier_groups mg
+      JOIN menu_items mi
+        ON mi.id = mg.menu_item_id
+      LEFT JOIN modifier_options mo
+        ON mo.modifier_group_id = mg.id
+      WHERE mi.restaurant_id = $1
+      ORDER BY mg.id, mo.id
+    `, [restaurantId])
+
+    // Rebuild the group -> options nesting the LEFT JOIN flattened. A group
+    // with no options yet still has one row (option_id IS NULL), so it stays
+    // visible to the owner editing the menu.
+    const groupsByItem = new Map()
+
+    for (const row of modifiersResult.rows) {
+      if (!groupsByItem.has(row.menu_item_id)) {
+        groupsByItem.set(row.menu_item_id, new Map())
+      }
+
+      const itemGroups = groupsByItem.get(row.menu_item_id)
+
+      if (!itemGroups.has(row.group_id)) {
+        itemGroups.set(row.group_id, {
+          id: row.group_id,
+          name: row.group_name,
+          is_required: row.is_required,
+          min_selection: row.min_selection,
+          max_selection: row.max_selection,
+          options: []
+        })
+      }
+
+      if (row.option_id !== null) {
+        itemGroups.get(row.group_id).options.push({
+          id: row.option_id,
+          name: row.option_name,
+          price_modifier: row.price_modifier,
+          is_available: row.option_is_available
+        })
+      }
+    }
+
     // Put items inside their respective categories // can be done through SQL ? **
     const categories = categoriesResult.rows.map(category => ({
       ...category,
-      items: itemsResult.rows.filter(
-        item => item.category_id === category.id
-      )
+      items: itemsResult.rows
+        .filter(item => item.category_id === category.id)
+        .map(item => ({
+          ...item,
+          modifier_groups: Array.from(
+            groupsByItem.get(item.id)?.values() || []
+          )
+        }))
     }))
 
   //   const result = await pool.query(`
@@ -579,6 +641,369 @@ router.delete(
 
       res.status(500).json({
         error: 'Server error deleting menu item.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
+// MODIFIERS
+//
+// A modifier group is a question about a dish ("Choose your size",
+// "Add-ons"); a modifier option is one answer, optionally with a price
+// difference. Groups hang off a single menu item, so ownership is always
+// resolved menu_item -> restaurant -> owner_id.
+// ============================================================
+
+// Shared ownership check for both levels of the modifier tree. Returns the
+// menu item row if the caller may edit it, otherwise null — the caller turns
+// that into the right 403/404.
+const findEditableMenuItem = async (db, menuItemId, actor) => {
+  const result = await db.query(`
+    SELECT
+      mi.id,
+      mi.restaurant_id,
+      r.owner_id
+    FROM menu_items mi
+    JOIN restaurants r
+      ON r.id = mi.restaurant_id
+    WHERE mi.id = $1
+  `, [menuItemId])
+
+  return result.rows[0] || null
+}
+
+
+// ============================================================
+// POST /api/menu/items/:itemId/modifier-groups
+// restaurant_owner or admin only
+// ============================================================
+router.post(
+  '/items/:itemId/modifier-groups',
+  authenticateToken,
+  requireRole('restaurant_owner', 'admin'),
+  async (req, res) => {
+
+    const itemId = parseId(req.params.itemId)
+    const { name, is_required, min_selection, max_selection } = req.body
+
+    if (itemId === null) {
+      return res.status(400).json({
+        error: 'Invalid menu item ID.'
+      })
+    }
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({
+        error: 'Modifier group name is required.'
+      })
+    }
+
+    const minSelection = min_selection === undefined ? 0 : Number(min_selection)
+    const maxSelection = max_selection === undefined ? 1 : Number(max_selection)
+    const isRequired = is_required === true
+
+    if (!Number.isInteger(minSelection) || minSelection < 0) {
+      return res.status(400).json({
+        error: 'min_selection must be a non-negative integer.'
+      })
+    }
+
+    if (!Number.isInteger(maxSelection) || maxSelection < 1) {
+      return res.status(400).json({
+        error: 'max_selection must be an integer of at least 1.'
+      })
+    }
+
+    if (minSelection > maxSelection) {
+      return res.status(400).json({
+        error: 'min_selection cannot exceed max_selection.'
+      })
+    }
+
+    // A required group the customer could satisfy by picking nothing is a
+    // contradiction, and would let checkout through with an incomplete dish.
+    if (isRequired && minSelection < 1) {
+      return res.status(400).json({
+        error: 'A required group must have min_selection of at least 1.'
+      })
+    }
+
+    try {
+      const item = await findEditableMenuItem(pool, itemId, req.user)
+
+      if (!item) {
+        return res.status(404).json({
+          error: 'Menu item not found.'
+        })
+      }
+
+      if (req.user.role !== 'admin' && item.owner_id !== req.user.id) {
+        return res.status(403).json({
+          error: 'You can only modify your own restaurant menu.'
+        })
+      }
+
+      const result = await pool.query(`
+        INSERT INTO modifier_groups
+          (menu_item_id, name, is_required, min_selection, max_selection)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, menu_item_id, name, is_required, min_selection, max_selection
+      `, [
+        itemId,
+        String(name).trim(),
+        isRequired,
+        minSelection,
+        maxSelection
+      ])
+
+      res.status(201).json({
+        modifier_group: {
+          ...result.rows[0],
+          options: []
+        }
+      })
+
+    } catch (error) {
+      console.error('Create modifier group error:', error)
+
+      res.status(500).json({
+        error: 'Server error creating modifier group.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
+// POST /api/menu/modifier-groups/:groupId/options
+// restaurant_owner or admin only
+// ============================================================
+router.post(
+  '/modifier-groups/:groupId/options',
+  authenticateToken,
+  requireRole('restaurant_owner', 'admin'),
+  async (req, res) => {
+
+    const groupId = parseId(req.params.groupId)
+    const { name, price_modifier } = req.body
+
+    if (groupId === null) {
+      return res.status(400).json({
+        error: 'Invalid modifier group ID.'
+      })
+    }
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({
+        error: 'Modifier option name is required.'
+      })
+    }
+
+    // A negative price_modifier is legitimate — "no cheese, -20" is a real
+    // discount — so only the shape is validated here, not the sign.
+    const priceModifier =
+      price_modifier === undefined || price_modifier === null
+        ? 0
+        : Number(price_modifier)
+
+    if (!Number.isFinite(priceModifier)) {
+      return res.status(400).json({
+        error: 'price_modifier must be a number.'
+      })
+    }
+
+    try {
+      const groupResult = await pool.query(`
+        SELECT
+          mg.id,
+          mg.menu_item_id,
+          r.owner_id
+        FROM modifier_groups mg
+        JOIN menu_items mi
+          ON mi.id = mg.menu_item_id
+        JOIN restaurants r
+          ON r.id = mi.restaurant_id
+        WHERE mg.id = $1
+      `, [groupId])
+
+      if (groupResult.rows.length === 0) {
+        return res.status(404).json({
+          error: 'Modifier group not found.'
+        })
+      }
+
+      if (
+        req.user.role !== 'admin' &&
+        groupResult.rows[0].owner_id !== req.user.id
+      ) {
+        return res.status(403).json({
+          error: 'You can only modify your own restaurant menu.'
+        })
+      }
+
+      const result = await pool.query(`
+        INSERT INTO modifier_options
+          (modifier_group_id, name, price_modifier)
+        VALUES ($1, $2, $3)
+        RETURNING id, modifier_group_id, name, price_modifier, is_available
+      `, [
+        groupId,
+        String(name).trim(),
+        priceModifier
+      ])
+
+      res.status(201).json({
+        modifier_option: result.rows[0]
+      })
+
+    } catch (error) {
+      console.error('Create modifier option error:', error)
+
+      res.status(500).json({
+        error: 'Server error creating modifier option.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
+// PATCH /api/menu/modifier-options/:optionId/toggle
+// restaurant_owner or admin only
+// Marks an option temporarily unavailable (ran out of cheese) without
+// deleting it and losing the price history on past orders.
+// ============================================================
+router.patch(
+  '/modifier-options/:optionId/toggle',
+  authenticateToken,
+  requireRole('restaurant_owner', 'admin'),
+  async (req, res) => {
+
+    const optionId = parseId(req.params.optionId)
+
+    if (optionId === null) {
+      return res.status(400).json({
+        error: 'Invalid modifier option ID.'
+      })
+    }
+
+    try {
+      const optionResult = await pool.query(`
+        SELECT
+          mo.id,
+          r.owner_id
+        FROM modifier_options mo
+        JOIN modifier_groups mg
+          ON mg.id = mo.modifier_group_id
+        JOIN menu_items mi
+          ON mi.id = mg.menu_item_id
+        JOIN restaurants r
+          ON r.id = mi.restaurant_id
+        WHERE mo.id = $1
+      `, [optionId])
+
+      if (optionResult.rows.length === 0) {
+        return res.status(404).json({
+          error: 'Modifier option not found.'
+        })
+      }
+
+      if (
+        req.user.role !== 'admin' &&
+        optionResult.rows[0].owner_id !== req.user.id
+      ) {
+        return res.status(403).json({
+          error: 'You can only modify your own restaurant menu.'
+        })
+      }
+
+      const result = await pool.query(`
+        UPDATE modifier_options
+        SET is_available = NOT is_available
+        WHERE id = $1
+        RETURNING id, name, price_modifier, is_available
+      `, [optionId])
+
+      res.json({
+        modifier_option: result.rows[0]
+      })
+
+    } catch (error) {
+      console.error('Toggle modifier option error:', error)
+
+      res.status(500).json({
+        error: 'Server error toggling modifier option.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
+// DELETE /api/menu/modifier-groups/:groupId
+// restaurant_owner or admin only
+// Options cascade with the group (ON DELETE CASCADE). Past orders are
+// unaffected: order_item_modifiers snapshots the name and price.
+// ============================================================
+router.delete(
+  '/modifier-groups/:groupId',
+  authenticateToken,
+  requireRole('restaurant_owner', 'admin'),
+  async (req, res) => {
+
+    const groupId = parseId(req.params.groupId)
+
+    if (groupId === null) {
+      return res.status(400).json({
+        error: 'Invalid modifier group ID.'
+      })
+    }
+
+    try {
+      const groupResult = await pool.query(`
+        SELECT
+          mg.id,
+          mg.name,
+          r.owner_id
+        FROM modifier_groups mg
+        JOIN menu_items mi
+          ON mi.id = mg.menu_item_id
+        JOIN restaurants r
+          ON r.id = mi.restaurant_id
+        WHERE mg.id = $1
+      `, [groupId])
+
+      if (groupResult.rows.length === 0) {
+        return res.status(404).json({
+          error: 'Modifier group not found.'
+        })
+      }
+
+      if (
+        req.user.role !== 'admin' &&
+        groupResult.rows[0].owner_id !== req.user.id
+      ) {
+        return res.status(403).json({
+          error: 'You can only modify your own restaurant menu.'
+        })
+      }
+
+      await pool.query(
+        'DELETE FROM modifier_groups WHERE id = $1',
+        [groupId]
+      )
+
+      res.json({
+        message: `Modifier group "${groupResult.rows[0].name}" deleted successfully.`
+      })
+
+    } catch (error) {
+      console.error('Delete modifier group error:', error)
+
+      res.status(500).json({
+        error: 'Server error deleting modifier group.'
       })
     }
   }

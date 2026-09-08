@@ -205,6 +205,91 @@ const RESTAURANTS = [
   }
 ]
 
+// Modifier groups, keyed by "<restaurant name>::<menu item name>". Kept
+// separate from RESTAURANTS so the item lists above stay readable — only a
+// few dishes have modifiers, and nesting empty arrays under the rest would
+// bury the menu.
+const MODIFIERS = {
+  'Pizza Republic::Margherita': [
+    {
+      name: 'Size',
+      is_required: true,
+      min_selection: 1,
+      max_selection: 1,
+      options: [
+        { name: 'Regular (9")', price_modifier: 0.00 },
+        { name: 'Large (12")', price_modifier: 250.00 },
+        { name: 'Family (16")', price_modifier: 520.00 }
+      ]
+    },
+    {
+      name: 'Extra toppings',
+      is_required: false,
+      min_selection: 0,
+      max_selection: 3,
+      options: [
+        { name: 'Extra cheese', price_modifier: 120.00 },
+        { name: 'Mushrooms', price_modifier: 90.00 },
+        { name: 'Olives', price_modifier: 80.00 },
+        { name: 'Jalapeños', price_modifier: 70.00 }
+      ]
+    }
+  ],
+
+  'The Burger Yard::Yard Classic': [
+    {
+      name: 'Doneness',
+      is_required: true,
+      min_selection: 1,
+      max_selection: 1,
+      options: [
+        { name: 'Medium', price_modifier: 0.00 },
+        { name: 'Well done', price_modifier: 0.00 }
+      ]
+    },
+    {
+      name: 'Add-ons',
+      is_required: false,
+      min_selection: 0,
+      max_selection: 4,
+      options: [
+        { name: 'Extra patty', price_modifier: 180.00 },
+        { name: 'Bacon', price_modifier: 140.00 },
+        { name: 'Fried egg', price_modifier: 60.00 },
+        // A negative modifier is legitimate: removing something cheapens the
+        // burger, and exercises the signed price_modifier column.
+        { name: 'No cheese', price_modifier: -30.00 }
+      ]
+    }
+  ],
+
+  'Chuli Kitchen::Kacchi Biryani': [
+    {
+      name: 'Portion',
+      is_required: true,
+      min_selection: 1,
+      max_selection: 1,
+      options: [
+        { name: 'Half', price_modifier: -150.00 },
+        { name: 'Full', price_modifier: 0.00 }
+      ]
+    },
+    {
+      name: 'Sides',
+      is_required: false,
+      min_selection: 0,
+      max_selection: 2,
+      options: [
+        { name: 'Extra borhani', price_modifier: 70.00 },
+        { name: 'Boiled egg', price_modifier: 40.00 },
+        // Seeded unavailable so the MODIFIER_OPTION_UNAVAILABLE path is
+        // reachable without editing rows by hand.
+        { name: 'Jali kabab', price_modifier: 160.00, is_available: false }
+      ]
+    }
+  ]
+}
+
 const PROMO_CODES = [
   { code: 'WELCOME20', discount_percent: 20, min_order_amount: 300.00,  expiry_date: '2027-12-31', usage_limit: 500 },
   { code: 'FLAT10',    discount_percent: 10, min_order_amount: 0.00,    expiry_date: '2027-12-31', usage_limit: 1000 },
@@ -374,6 +459,67 @@ const ensureMenuItem = async (client, restaurantId, categoryId, item) => {
   return { id: inserted.rows[0].id, created: true }
 }
 
+// Natural key: group name within a menu item.
+const ensureModifierGroup = async (client, menuItemId, group) => {
+  const existing = await client.query(
+    'SELECT id FROM modifier_groups WHERE menu_item_id = $1 AND name = $2',
+    [menuItemId, group.name]
+  )
+
+  if (existing.rows.length > 0) {
+    return { id: existing.rows[0].id, created: false }
+  }
+
+  const inserted = await client.query(
+    `
+      INSERT INTO modifier_groups
+        (menu_item_id, name, is_required, min_selection, max_selection)
+      VALUES
+        ($1, $2, $3, $4, $5)
+      RETURNING id
+    `,
+    [
+      menuItemId,
+      group.name,
+      group.is_required,
+      group.min_selection,
+      group.max_selection
+    ]
+  )
+
+  return { id: inserted.rows[0].id, created: true }
+}
+
+// Natural key: option name within a group.
+const ensureModifierOption = async (client, groupId, option) => {
+  const existing = await client.query(
+    'SELECT id FROM modifier_options WHERE modifier_group_id = $1 AND name = $2',
+    [groupId, option.name]
+  )
+
+  if (existing.rows.length > 0) {
+    return { id: existing.rows[0].id, created: false }
+  }
+
+  const inserted = await client.query(
+    `
+      INSERT INTO modifier_options
+        (modifier_group_id, name, price_modifier, is_available)
+      VALUES
+        ($1, $2, $3, $4)
+      RETURNING id
+    `,
+    [
+      groupId,
+      option.name,
+      option.price_modifier,
+      option.is_available !== false // default true unless explicitly false
+    ]
+  )
+
+  return { id: inserted.rows[0].id, created: true }
+}
+
 // promo_codes.code is UNIQUE — another real upsert.
 const ensurePromoCode = async (client, promo) => {
   const inserted = await client.query(
@@ -413,6 +559,8 @@ const run = async () => {
     branches: 0,
     categories: 0,
     menuItems: 0,
+    modifierGroups: 0,
+    modifierOptions: 0,
     promoCodes: 0
   }
 
@@ -476,6 +624,27 @@ const run = async () => {
         for (const item of category.items) {
           const result = await ensureMenuItem(client, restaurantId, categoryId, item)
           if (result.created) stats.menuItems++
+
+          // Attach this dish's modifier groups, if it has any.
+          const groups = MODIFIERS[`${restaurant.name}::${item.name}`] || []
+
+          for (const group of groups) {
+            const groupResult = await ensureModifierGroup(
+              client,
+              result.id,
+              group
+            )
+            if (groupResult.created) stats.modifierGroups++
+
+            for (const option of group.options) {
+              const optionResult = await ensureModifierOption(
+                client,
+                groupResult.id,
+                option
+              )
+              if (optionResult.created) stats.modifierOptions++
+            }
+          }
         }
       }
     }
@@ -500,6 +669,8 @@ const run = async () => {
     console.log(`  branches         ${stats.branches}`)
     console.log(`  menu_categories  ${stats.categories}`)
     console.log(`  menu_items       ${stats.menuItems}`)
+    console.log(`  modifier_groups  ${stats.modifierGroups}`)
+    console.log(`  modifier_options ${stats.modifierOptions}`)
     console.log(`  promo_codes      ${stats.promoCodes}`)
 
     if (total === 0) {

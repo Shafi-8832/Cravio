@@ -9,10 +9,12 @@
 -- DATABASE STRUCTURE
 -- ============================================================
 
-DROP TABLE IF EXISTS 
+DROP TABLE IF EXISTS
     cart_item_modifiers,
     cart_items,
     carts,
+
+    order_item_modifiers,
 
     quality_flag_log,
     restaurant_reviews,
@@ -703,12 +705,20 @@ CREATE TABLE cart_items (
 
 
     created_at TIMESTAMP
-        DEFAULT CURRENT_TIMESTAMP,
+        DEFAULT CURRENT_TIMESTAMP
 
 
-    -- Same item in same cart updates quantity
-    UNIQUE(cart_id, menu_item_id)
+    -- NOTE: there is deliberately no UNIQUE(cart_id, menu_item_id) here.
+    -- A cart line is the menu item PLUS its chosen modifiers, so the same
+    -- dish ordered two different ways ("extra cheese" vs "no basil") must
+    -- be two rows. Merging identical configurations is handled in
+    -- routes/cart.js, which can compare modifier sets — something a table
+    -- constraint cannot do. See db/migrations/001_modifiers.sql.
 );
+
+
+CREATE INDEX idx_cart_items_cart_menu_item
+    ON cart_items(cart_id, menu_item_id);
 
 
 
@@ -737,7 +747,48 @@ CREATE TABLE cart_item_modifiers (
 
 
 -- ============================================================
--- 20. USER SESSIONS
+-- 20. ORDER ITEM MODIFIERS
+--
+-- The order-side counterpart of cart_item_modifiers. The cart rows are
+-- deleted at checkout, so the chosen modifiers have to be copied onto the
+-- order or they are lost — the kitchen would never see "extra cheese" and
+-- the total could not be explained afterwards.
+--
+-- name and price_modifier are snapshots, for the same reason
+-- order_items.unit_price is: renaming or re-pricing an option later must
+-- not rewrite what an old order said or charged.
+-- ============================================================
+
+CREATE TABLE order_item_modifiers (
+
+    id SERIAL PRIMARY KEY,
+
+
+    order_item_id INTEGER
+        REFERENCES order_items(id)
+        ON DELETE CASCADE,
+
+
+    modifier_option_id INTEGER
+        REFERENCES modifier_options(id),
+
+
+    name VARCHAR(100)
+        NOT NULL,
+
+
+    price_modifier DECIMAL(10,2)
+        NOT NULL
+        DEFAULT 0.00,
+
+
+    UNIQUE(order_item_id, modifier_option_id)
+);
+
+
+
+-- ============================================================
+-- 21. USER SESSIONS
 -- ============================================================
 
 CREATE TABLE revoked_tokens (

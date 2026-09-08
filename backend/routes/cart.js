@@ -41,11 +41,38 @@ router.get(
 
     try {
 
-      const result = await pool.query(`
+      /* আগের single LEFT JOIN query-তে "cart আছে কিন্তু empty" অবস্থায় সব
+       * column NULL সহ একটা row ফেরত যেত, যেটা frontend render করতে গিয়ে
+       * ভেঙে যায়। এখন cart-টা আলাদা করে খোঁজা হয় এবং সেই তথ্য cart_exists
+       * field-এ স্পষ্টভাবে পাঠানো হয় — information থাকছে, ভুয়া NULL row নেই।
+       *
+       * carts <--- cart_items <--- cart_item_modifiers [relationships] */
+
+      const cartResult = await pool.query(`
+        SELECT id
+        FROM carts
+        WHERE user_id = $1
+          AND restaurant_id = $2
+      `, [
+        userId,
+        restaurantId
+      ])
+
+
+      if (cartResult.rows.length === 0) {
+        return res.json({
+          cart_exists: false,
+          cart: [],
+          subtotal: '0.00'
+        })
+      }
+
+
+      const cartId = cartResult.rows[0].id
+
+
+      const linesResult = await pool.query(`
         SELECT
-
-          c.id AS cart_id,
-
           ci.id AS cart_item_id,
 
           mi.id AS menu_item_id,
@@ -53,35 +80,100 @@ router.get(
           mi.description,
           mi.price,
           mi.image_url,
+          mi.is_available,
 
           ci.quantity
 
+        FROM cart_items ci
 
-        FROM carts c
+        JOIN menu_items mi
+          ON mi.id = ci.menu_item_id
 
-
-        LEFT JOIN cart_items ci
-          ON c.id = ci.cart_id
-
-
-        LEFT JOIN menu_items mi
-          ON ci.menu_item_id = mi.id
-
-
-        WHERE c.user_id = $1
-        AND c.restaurant_id = $2
-
+        WHERE ci.cart_id = $1
 
         ORDER BY ci.id
+      `, [cartId])
 
-      `, [
-        userId,
-        restaurantId
-      ])
+
+      // Every line's modifiers in one query rather than one query per line.
+      const cartItemIds = linesResult.rows.map(row => row.cart_item_id)
+
+      const modifiersResult = cartItemIds.length === 0
+        ? { rows: [] }
+        : await pool.query(`
+            SELECT
+              cim.cart_item_id,
+              mo.id AS modifier_option_id,
+              mo.name,
+              mo.price_modifier,
+              mo.is_available,
+              mg.name AS group_name
+
+            FROM cart_item_modifiers cim
+
+            JOIN modifier_options mo
+              ON mo.id = cim.modifier_option_id
+
+            JOIN modifier_groups mg
+              ON mg.id = mo.modifier_group_id
+
+            WHERE cim.cart_item_id = ANY($1::int[])
+
+            ORDER BY cim.cart_item_id, mo.id
+          `, [cartItemIds])
+
+
+      const modifiersByCartItem = new Map()
+
+      for (const row of modifiersResult.rows) {
+        if (!modifiersByCartItem.has(row.cart_item_id)) {
+          modifiersByCartItem.set(row.cart_item_id, [])
+        }
+
+        modifiersByCartItem.get(row.cart_item_id).push({
+          modifier_option_id: row.modifier_option_id,
+          name: row.name,
+          group_name: row.group_name,
+          price_modifier: row.price_modifier,
+          is_available: row.is_available
+        })
+      }
+
+
+      /* Money is computed in JS here, but place_order() recomputes all of it
+       * in SQL at checkout. These numbers are for display only — nothing the
+       * client sends is ever trusted as the price of anything. DECIMAL columns
+       * arrive from pg as strings, hence the Number() conversions. */
+      const cart = linesResult.rows.map(row => {
+        const modifiers = modifiersByCartItem.get(row.cart_item_id) || []
+
+        const modifierTotal = modifiers.reduce(
+          (sum, modifier) => sum + Number(modifier.price_modifier),
+          0
+        )
+
+        const unitPrice = Number(row.price) + modifierTotal
+
+        return {
+          ...row,
+          modifiers,
+          // Base price plus the chosen modifiers, for one unit.
+          unit_price: unitPrice.toFixed(2),
+          line_total: (unitPrice * row.quantity).toFixed(2)
+        }
+      })
+
+
+      const subtotal = cart.reduce(
+        (sum, line) => sum + Number(line.line_total),
+        0
+      )
 
 
       res.json({
-        cart: result.rows
+        cart_exists: true,
+        cart,
+        subtotal: subtotal.toFixed(2)
       })
 
 
@@ -152,6 +244,37 @@ router.post(
     }
 
 
+    // ---------------------------------------------------------
+    // Chosen modifiers ("extra cheese", "large"). Optional — an item with
+    // no modifier groups is added exactly as before.
+    //
+    // Sorted and de-duplicated up front, because the set is later compared
+    // against existing cart lines to decide "is this the same thing the
+    // customer already added?", and [2,1] must match [1,2].
+    // ---------------------------------------------------------
+    const rawModifierIds = req.body.modifier_option_ids
+
+    if (
+      rawModifierIds !== undefined &&
+      rawModifierIds !== null &&
+      !Array.isArray(rawModifierIds)
+    ) {
+      return res.status(400).json({
+        error: 'modifier_option_ids must be an array.'
+      })
+    }
+
+    const modifierOptionIds = Array.from(
+      new Set((rawModifierIds || []).map(Number))
+    ).sort((a, b) => a - b)
+
+    if (modifierOptionIds.some(id => !Number.isInteger(id) || id <= 0)) {
+      return res.status(400).json({
+        error: 'modifier_option_ids must contain positive integers.'
+      })
+    }
+
+
     const client = await pool.connect()
 
 
@@ -205,6 +328,112 @@ router.post(
           error: 'Menu item is currently unavailable.',
           code: 'MENU_ITEM_UNAVAILABLE'
         })
+      }
+
+
+      // =====================================================
+      // Validate the chosen modifiers against this item's groups
+      //
+      // Every group belonging to this menu item is loaded, along with the
+      // subset of the customer's chosen options that fall inside it. That
+      // makes all four checks below answerable from one result set:
+      //   - does every chosen option actually belong to this dish?
+      //   - is every chosen option still available?
+      //   - does each group get at least min_selection choices?
+      //   - does each group get at most max_selection choices?
+      // =====================================================
+
+      const groupsResult = await client.query(`
+        SELECT
+          mg.id,
+          mg.name,
+          mg.is_required,
+          mg.min_selection,
+          mg.max_selection,
+
+          -- The chosen options that live in this group.
+          COALESCE(
+            ARRAY_AGG(mo.id) FILTER (WHERE mo.id = ANY($2::int[])),
+            ARRAY[]::int[]
+          ) AS chosen_option_ids,
+
+          -- Of those, the ones the kitchen has turned off.
+          COALESCE(
+            ARRAY_AGG(mo.name) FILTER (
+              WHERE mo.id = ANY($2::int[]) AND mo.is_available = false
+            ),
+            ARRAY[]::varchar[]
+          ) AS unavailable_option_names
+
+        FROM modifier_groups mg
+
+        LEFT JOIN modifier_options mo
+          ON mo.modifier_group_id = mg.id
+
+        WHERE mg.menu_item_id = $1
+
+        GROUP BY mg.id
+        ORDER BY mg.id
+      `, [menuItemId, modifierOptionIds])
+
+
+      // Anything the customer picked that did not land in one of this item's
+      // groups is an option belonging to some other dish.
+      const validOptionIds = new Set(
+        groupsResult.rows.flatMap(group => group.chosen_option_ids)
+      )
+
+      const foreignOptionIds = modifierOptionIds.filter(
+        id => !validOptionIds.has(id)
+      )
+
+      if (foreignOptionIds.length > 0) {
+        await client.query('ROLLBACK')
+
+        return res.status(400).json({
+          error: 'One or more modifiers do not belong to this menu item.',
+          code: 'MODIFIER_ITEM_MISMATCH',
+          invalid_option_ids: foreignOptionIds
+        })
+      }
+
+
+      for (const group of groupsResult.rows) {
+        if (group.unavailable_option_names.length > 0) {
+          await client.query('ROLLBACK')
+
+          return res.status(409).json({
+            error: `Currently unavailable: ${group.unavailable_option_names.join(', ')}.`,
+            code: 'MODIFIER_OPTION_UNAVAILABLE'
+          })
+        }
+
+        const chosenCount = group.chosen_option_ids.length
+
+        // min_selection only binds when the group is required. An optional
+        // group left entirely untouched is fine; partially answering one is
+        // not, which is why the check is skipped at zero rather than always.
+        const minimumApplies = group.is_required || chosenCount > 0
+
+        if (minimumApplies && chosenCount < group.min_selection) {
+          await client.query('ROLLBACK')
+
+          return res.status(400).json({
+            error: `"${group.name}" needs at least ${group.min_selection} selection(s).`,
+            code: 'MODIFIER_MIN_NOT_MET',
+            group: group.name
+          })
+        }
+
+        if (chosenCount > group.max_selection) {
+          await client.query('ROLLBACK')
+
+          return res.status(400).json({
+            error: `"${group.name}" allows at most ${group.max_selection} selection(s).`,
+            code: 'MODIFIER_MAX_EXCEEDED',
+            group: group.name
+          })
+        }
       }
 
 
@@ -276,32 +505,95 @@ router.post(
       // =====================================================
 
       // EXCLUDED সেই নতুন row-টিকে বোঝায় যেটি PostgreSQL insert করতে চেয়েছিল, কিন্তু conflict হওয়ার কারণে insert করতে পারেনি।
-      await client.query(`
+      // The ON CONFLICT(cart_id, menu_item_id) upsert that used to live here
+      // stopped working once modifiers existed: a cart line is the dish PLUS
+      // its chosen options, so "Margherita + extra cheese" and "Margherita,
+      // plain" are two different things to cook and must be two rows. The
+      // UNIQUE constraint that ON CONFLICT relied on was therefore dropped
+      // (see db/migrations/001_modifiers.sql).
+      //
+      // Merging still happens — but only into a line whose modifier set is
+      // *exactly* the same. The subquery rebuilds each candidate line's option
+      // ids as a sorted array and compares it against the incoming sorted
+      // array, so set equality is decided in SQL rather than by pulling every
+      // line back and diffing it in JS.
+      const matchingLine = await client.query(`
 
-        INSERT INTO cart_items
-        (
-          cart_id,
-          menu_item_id,
-          quantity
-        )
+        SELECT ci.id
 
-        VALUES
-        ($1,$2,$3)
+        FROM cart_items ci
 
+        WHERE ci.cart_id = $1
+          AND ci.menu_item_id = $2
+          AND COALESCE(
+                (
+                  SELECT ARRAY_AGG(cim.modifier_option_id ORDER BY cim.modifier_option_id)
+                  FROM cart_item_modifiers cim
+                  WHERE cim.cart_item_id = ci.id
+                ),
+                ARRAY[]::int[]
+              ) = $3::int[]
 
-        ON CONFLICT(cart_id,menu_item_id)
-
-        DO UPDATE
-
-        SET quantity =
-        cart_items.quantity + EXCLUDED.quantity
-
+        -- Without the lock, two concurrent adds of the same configuration
+        -- would both miss this lookup and insert duplicate lines.
+        FOR UPDATE
 
       `,[
         cartId,
         menuItemId,
-        quantity
+        modifierOptionIds
       ])
+
+
+      if (matchingLine.rows.length > 0) {
+
+        await client.query(`
+          UPDATE cart_items
+          SET quantity = quantity + $1
+          WHERE id = $2
+        `,[
+          quantity,
+          matchingLine.rows[0].id
+        ])
+
+      } else {
+
+        const newLine = await client.query(`
+
+          INSERT INTO cart_items
+          (
+            cart_id,
+            menu_item_id,
+            quantity
+          )
+
+          VALUES
+          ($1,$2,$3)
+
+          RETURNING id
+
+        `,[
+          cartId,
+          menuItemId,
+          quantity
+        ])
+
+
+        if (modifierOptionIds.length > 0) {
+          // UNNEST turns the array into rows, so the whole selection goes in
+          // as one INSERT instead of a loop of round trips.
+          await client.query(`
+            INSERT INTO cart_item_modifiers
+              (cart_item_id, modifier_option_id)
+            SELECT $1, option_id
+            FROM UNNEST($2::int[]) AS option_id
+          `,[
+            newLine.rows[0].id,
+            modifierOptionIds
+          ])
+        }
+
+      }
 
 
       await client.query('COMMIT')
