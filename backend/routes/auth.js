@@ -283,9 +283,18 @@ router.post('/logout', authenticateToken, async (req, res) => {
         ]
       )
 
+    // Opportunistic cleanup. Every authenticated request joins against this
+    // table, so it must not grow without bound. A revoked token past its own
+    // expiry is already rejected by jwt.verify(), which makes the row
+    // redundant — dropping it here keeps the table roughly the size of the
+    // set of currently-valid revoked tokens, at the cost of one cheap DELETE
+    // on an action that happens far less often than reading.
+    await pool.query(
+      `DELETE FROM revoked_tokens WHERE expires_at < CURRENT_TIMESTAMP`
+    )
 
     res.json({message : "Logged out successfully."})
-    
+
   } catch (error) {
     console.error('Logout error:', error)
 
