@@ -23,6 +23,14 @@ const OWNER_STATUS_TRANSITIONS = {
   confirmed: ['preparing', 'cancelled']
 }
 
+// A customer may back out only while the restaurant has not started cooking.
+// Once the order is 'preparing' the food is already being made, so cancelling
+// is the restaurant's call, not the customer's.
+const CUSTOMER_STATUS_TRANSITIONS = {
+  pending: ['cancelled'],
+  confirmed: ['cancelled']
+}
+
 // all the exceptions that can be thrown by the place_order function in the database 
 // are mapped to a more user-friendly error message and status code here. 
 // This allows the application to provide more meaningful feedback to the user when an error occurs during the checkout process.
@@ -61,6 +69,11 @@ const CHECKOUT_ERROR_MAP = {
     409,
     'CART_CONTAINS_UNAVAILABLE_ITEM',
     'One or more cart items are no longer available.'
+  ],
+  CART_CONTAINS_UNAVAILABLE_MODIFIER: [
+    409,
+    'CART_CONTAINS_UNAVAILABLE_MODIFIER',
+    'One or more selected options are no longer available.'
   ],
   PROMO_CODE_INVALID: [
     422,
@@ -168,6 +181,29 @@ const mapCheckoutError = (error) => {
   return error
 }
 
+// place_order() increments promo_codes.used_count at checkout. If the order
+// is later cancelled that consumption was never actually realised, so give
+// the slot back — otherwise every cancellation permanently shrinks how many
+// times a promo can still be used.
+//
+// GREATEST(..., 0) guards against a negative count if a row is ever
+// decremented twice; the caller only calls this on a real pending ->
+// cancelled transition, but the floor makes the column safe regardless.
+const refundPromoUsage = async (client, promoCodeId) => {
+  if (!promoCodeId) {
+    return
+  }
+
+  await client.query(
+    `
+      UPDATE promo_codes
+      SET used_count = GREATEST(used_count - 1, 0)
+      WHERE id = $1
+    `,
+    [promoCodeId]
+  )
+}
+
 const getOrderDetailsWithDb = async (db, orderId, actor) => {
   const conditions = ['o.id = $1']
   const values = [orderId]
@@ -240,11 +276,33 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
           mi.name,
           oi.quantity,
           oi.unit_price,
-          ROUND(oi.quantity * oi.unit_price, 2) AS line_total,
-          oi.special_instruction
+          line.modifier_total,
+          -- unit_price is the base menu price; the chosen modifiers are added
+          -- before multiplying by quantity, matching how place_order()
+          -- computed the subtotal in the first place.
+          ROUND((oi.unit_price + line.modifier_total) * oi.quantity, 2) AS line_total,
+          oi.special_instruction,
+          line.modifiers
         FROM order_items oi
         LEFT JOIN menu_items mi
           ON mi.id = oi.menu_item_id
+        CROSS JOIN LATERAL (
+          SELECT
+            COALESCE(SUM(oim.price_modifier), 0.00) AS modifier_total,
+            COALESCE(
+              JSON_AGG(
+                JSON_BUILD_OBJECT(
+                  'modifier_option_id', oim.modifier_option_id,
+                  'name', oim.name,
+                  'price_modifier', oim.price_modifier
+                )
+                ORDER BY oim.id
+              ) FILTER (WHERE oim.id IS NOT NULL),
+              '[]'
+            ) AS modifiers
+          FROM order_item_modifiers oim
+          WHERE oim.order_item_id = oi.id
+        ) AS line
         WHERE oi.order_id = $1
         ORDER BY oi.id
       `,
@@ -569,11 +627,20 @@ const updateOrderStatus = async (
 ) => {
   const orderId = toPositiveInteger(orderIdValue, 'order id')
 
-  if (!['confirmed', 'preparing', 'cancelled'].includes(newStatus)) {
+  // A customer only ever cancels; owners and admins drive the order forward.
+  const isCustomer = actor.role === 'customer'
+
+  const allowedTargets = isCustomer
+    ? ['cancelled']
+    : ['confirmed', 'preparing', 'cancelled']
+
+  if (!allowedTargets.includes(newStatus)) {
     throw new OrderServiceError(
       400,
       'VALIDATION_ERROR',
-      'Restaurant owners can set status to confirmed, preparing, or cancelled.'
+      isCustomer
+        ? 'Customers can only cancel an order.'
+        : 'Restaurant owners can set status to confirmed, preparing, or cancelled.'
     )
   }
 
@@ -587,6 +654,8 @@ const updateOrderStatus = async (
         SELECT
           o.id,
           o.status,
+          o.customer_id,
+          o.promo_code_id,
           r.owner_id
         FROM orders o
         JOIN restaurant_branches rb
@@ -609,15 +678,29 @@ const updateOrderStatus = async (
 
     const currentOrder = orderResult.rows[0]
 
-    if (actor.role !== 'admin' && currentOrder.owner_id !== actor.id) {
-      throw new OrderServiceError(
-        403,
-        'ACCESS_DENIED',
-        'You can only manage orders from your own restaurant.'
-      )
+    // Object-level authorization: a customer must own the order, an owner must
+    // own the restaurant it was placed with. Admin bypasses both.
+    if (actor.role !== 'admin') {
+      const isOwnResource = isCustomer
+        ? currentOrder.customer_id === actor.id
+        : currentOrder.owner_id === actor.id
+
+      if (!isOwnResource) {
+        throw new OrderServiceError(
+          403,
+          'ACCESS_DENIED',
+          isCustomer
+            ? 'You can only cancel your own orders.'
+            : 'You can only manage orders from your own restaurant.'
+        )
+      }
     }
 
-    const permittedStatuses = OWNER_STATUS_TRANSITIONS[currentOrder.status] || []
+    const transitions = isCustomer
+      ? CUSTOMER_STATUS_TRANSITIONS
+      : OWNER_STATUS_TRANSITIONS
+
+    const permittedStatuses = transitions[currentOrder.status] || []
 
     if (!permittedStatuses.includes(newStatus)) {
       throw new OrderServiceError(
@@ -635,6 +718,25 @@ const updateOrderStatus = async (
       `,
       [newStatus, orderId]
     )
+
+    if (newStatus === 'cancelled') {
+      // Same transaction as the status change, so the promo slot and the
+      // cancellation either both land or neither does.
+      await refundPromoUsage(client, currentOrder.promo_code_id)
+
+      // A cancelled order will never be paid for. Leaving the payment row
+      // 'unpaid' would make it indistinguishable from one still awaiting
+      // settlement in any payments report.
+      await client.query(
+        `
+          UPDATE payments
+          SET status = 'failed'
+          WHERE order_id = $1
+            AND status = 'unpaid'
+        `,
+        [orderId]
+      )
+    }
 
     const order = await getOrderDetailsWithDb(client, orderId, actor)
 

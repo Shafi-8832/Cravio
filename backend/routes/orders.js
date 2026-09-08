@@ -134,4 +134,34 @@ router.patch(
   }
 )
 
+
+// ============================================================
+// PATCH /api/orders/:id/cancel
+// Customer only - back out of an order the restaurant has not started
+// cooking yet (pending or confirmed). Separate from /status because a
+// customer has exactly one legal transition, so there is nothing for the
+// client to choose and no status to send.
+// ============================================================
+router.patch(
+  '/:id/cancel',
+  authenticateToken,
+  requireRole('customer'),
+  async (req, res) => {
+    try {
+      const order = await updateOrderStatus(
+        req.params.id,
+        'cancelled',
+        req.user
+      )
+
+      return res.json({
+        message: 'Order cancelled.',
+        order
+      })
+    } catch (error) {
+      return sendError(res, error, 'Cancel order error:')
+    }
+  }
+)
+
 module.exports = router
