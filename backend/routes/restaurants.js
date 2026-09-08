@@ -66,6 +66,60 @@ router.get('/', async (req, res) => {
 
 
 // ============================================================
+// GET /api/restaurants/mine
+// restaurant_owner only
+// Returns every restaurant owned by the logged-in user, with branches
+// nested inline. This must be declared BEFORE GET /:id, otherwise
+// Express would try to parse "mine" as a numeric restaurant id.
+// ============================================================
+router.get(
+  '/mine',
+  authenticateToken,
+  requireRole('restaurant_owner'),
+  async (req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          r.id,
+          r.name,
+          r.created_at,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', rb.id,
+                'address', rb.address,
+                'area', rb.area,
+                'city', rb.city,
+                'phone', rb.phone,
+                'is_open', rb.is_open
+              ) ORDER BY rb.id
+            ) FILTER (WHERE rb.id IS NOT NULL),
+            '[]'
+          ) AS branches
+        FROM restaurants r
+        LEFT JOIN restaurant_branches rb
+          ON rb.restaurant_id = r.id
+        WHERE r.owner_id = $1
+        GROUP BY r.id
+        ORDER BY r.created_at DESC
+      `, [req.user.id])
+
+      res.json({
+        restaurants: result.rows
+      })
+
+    } catch (error) {
+      console.error('Get my restaurants error:', error)
+
+      res.status(500).json({
+        error: 'Server error fetching your restaurants.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
 // GET /api/restaurants/:id
 // Public
 // Returns one restaurant + branches + menu categories

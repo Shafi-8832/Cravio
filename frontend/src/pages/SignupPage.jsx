@@ -116,6 +116,7 @@ const SignupPage = () => {
               onChange={handleChange}
               placeholder="At least 8 characters"
               required
+              minLength={8}
               className="w-full border border-gray-300 rounded-lg px-4 py-2 
                          focus:outline-none focus:ring-2 focus:ring-green-500"
             />

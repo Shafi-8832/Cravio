@@ -74,6 +74,10 @@ CREATE TABLE users (
 
     phone VARCHAR(20),
 
+    is_active BOOLEAN
+        NOT NULL
+        DEFAULT true,
+
     created_at TIMESTAMP
         DEFAULT CURRENT_TIMESTAMP
 );

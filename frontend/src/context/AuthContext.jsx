@@ -27,7 +27,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-      await api.post('/auth/logout') // tell the backend to revoke the token
+      await api.post('/api/auth/logout') // tell the backend to revoke the token
     } catch (error) {
       console.error('Logout error:', error)
     } finally {

@@ -38,6 +38,40 @@ const Navbar = () => {
               {user.role.replace('_', ' ')} {/* e.g. "restaurant owner" */}
             </span>
 
+            {/* Role-specific navigation — each role only sees its own link */}
+            {user.role === 'customer' && (
+              <Link
+                to="/orders"
+                className="text-sm hover:text-green-200 transition-colors"
+              >
+                My Orders
+              </Link>
+            )}
+            {user.role === 'restaurant_owner' && (
+              <Link
+                to="/owner"
+                className="text-sm hover:text-green-200 transition-colors"
+              >
+                Dashboard
+              </Link>
+            )}
+            {user.role === 'rider' && (
+              <Link
+                to="/rider"
+                className="text-sm hover:text-green-200 transition-colors"
+              >
+                Deliveries
+              </Link>
+            )}
+            {user.role === 'admin' && (
+              <Link
+                to="/admin"
+                className="text-sm hover:text-green-200 transition-colors"
+              >
+                Admin Panel
+              </Link>
+            )}
+
             {/* NEW: cart button, opens the CartDrawer */}
             { canUseCart && ( 
               <button

@@ -40,13 +40,32 @@ const authenticateToken = async (req, res, next) => {
       process.env.JWT_SECRET
     )
 
-    const revoked = await pool.query(
-      `SELECT id FROM revoked_tokens WHERE jti = $1`,
-      [decoded.jti]
+    // One combined query: is this token revoked, and is the account still active?
+    // Checking is_active here (not just at login) means an admin suspending a
+    // user takes effect on their very next request, not just their next login.
+    const statusCheck = await pool.query(
+      `
+        SELECT
+          u.is_active,
+          rt.id AS revoked_id
+        FROM users u
+        LEFT JOIN revoked_tokens rt
+          ON rt.jti = $1
+        WHERE u.id = $2
+      `,
+      [decoded.jti, decoded.id]
     )
 
-    if (revoked.rows.length > 0) {
+    if (statusCheck.rows.length === 0) {
+      return res.status(401).json({ error: 'User account no longer exists.' })
+    }
+
+    if (statusCheck.rows[0].revoked_id) {
       return res.status(401).json({ error : "Token has been revoked. Please log in again."})
+    }
+
+    if (!statusCheck.rows[0].is_active) {
+      return res.status(403).json({ error: 'Your account has been suspended. Contact support.' })
     }
 
     // VERY IMPORTANT:

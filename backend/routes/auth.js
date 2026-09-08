@@ -24,6 +24,38 @@ router.post('/signup', async (req, res) => {
     })
   }
 
+  // Normalize before validating/storing so "Test@X.com" and "test@x.com"
+  // are treated as the same account, and so stray whitespace can't sneak in.
+  const trimmedName = String(name).trim()
+  const trimmedEmail = String(email).trim().toLowerCase()
+  const trimmedPhone = String(phone).trim()
+
+  if (!trimmedName || !trimmedEmail || !trimmedPhone) {
+    return res.status(400).json({
+      error: 'All fields are required.'
+    })
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(trimmedEmail)) {
+    return res.status(400).json({
+      error: 'Please enter a valid email address.'
+    })
+  }
+
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters.'
+    })
+  }
+
+  const phoneRegex = /^[0-9+\-\s()]{7,20}$/
+  if (!phoneRegex.test(trimmedPhone)) {
+    return res.status(400).json({
+      error: 'Please enter a valid phone number.'
+    })
+  }
+
   const allowedRoles = [
     'customer',
     'restaurant_owner',
@@ -52,7 +84,7 @@ router.post('/signup', async (req, res) => {
 
     const existingUser = await client.query(
       'SELECT id FROM users WHERE email = $1', // SQL injection prevention
-      [email]
+      [trimmedEmail]
     )
 
     if (existingUser.rows.length > 0) {
@@ -78,11 +110,11 @@ router.post('/signup', async (req, res) => {
           role
       `,
       [
-        name,
-        email,
+        trimmedName,
+        trimmedEmail,
         hashedPassword,
         role,
-        phone
+        trimmedPhone
       ]
     )
 
@@ -153,10 +185,12 @@ router.post('/login', async (req, res) => {
     })
   }
 
+  const trimmedEmail = String(email).trim().toLowerCase()
+
   try {
     const result = await pool.query(
       'SELECT * FROM users WHERE email = $1',
-      [email]
+      [trimmedEmail]
     )
 
     if (result.rows.length === 0) {
@@ -175,6 +209,12 @@ router.post('/login', async (req, res) => {
     if (!validPassword) {
       return res.status(401).json({
         error: 'Invalid email or password.' // never reveal whether the email or password is wrong, for security reasons
+      })
+    }
+
+    if (!user.is_active) {
+      return res.status(403).json({
+        error: 'Your account has been suspended. Contact support.'
       })
     }
 

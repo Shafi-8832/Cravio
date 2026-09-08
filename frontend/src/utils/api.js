@@ -30,5 +30,30 @@ use(
 )
 
 
+// this runs automatically after EVERY RESPONSE comes back
+// if the backend says our token is invalid/expired/revoked (401), our local
+// session is stale — clear it and send the user back to login instead of
+// leaving every future request failing silently
+// (skipped while already ON the login page, so a wrong-password 401 there
+// just shows the normal inline error instead of forcing a reload)
+api.
+interceptors.
+response.
+use(
+    (response) => response,
+    (error) => {
+        if (
+            error.response?.status === 401 &&
+            window.location.pathname !== '/login'
+        ) {
+            localStorage.removeItem('token')
+            localStorage.removeItem('user')
+            window.location.href = '/login'
+        }
+
+        return Promise.reject(error)
+    }
+)
+
 export default api // punching a hole in the file and pulling out 'api' object out
 // now any react component can do 'import api from '../utils/api.js' pull out this token-attaching postman for their requests

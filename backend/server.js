@@ -10,6 +10,8 @@ const cartRoutes = require('./routes/cart')
 
 const menuRoutes = require('./routes/menu') // Menu Routes
 const orderRoutes = require('./routes/orders') // Order Routes
+const riderRoutes = require('./routes/rider') // Rider Routes
+const adminRoutes = require('./routes/admin') // Admin Routes
 
 const app = express()
 const PORT = process.env.PORT || 8000
@@ -32,6 +34,8 @@ app.use('/api/restaurants', restaurantRoutes)
 app.use('/api/menu', menuRoutes)
 app.use('/api/cart', cartRoutes)
 app.use('/api/orders', orderRoutes)
+app.use('/api/rider', riderRoutes)
+app.use('/api/admin', adminRoutes)
 
 // Root route
 app.get('/', (req, res) => {

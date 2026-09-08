@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom'
 import { useCart } from '../context/CartContext'
 
 // isOpen: whether the drawer is visible; onClose: fn to call to hide it
@@ -11,6 +12,8 @@ const CartDrawer = ({ isOpen, onClose }) => {
     removeItem,
     cartTotal
   } = useCart()
+
+  const navigate = useNavigate()
 
   if (!isOpen) return null // render nothing at all when closed — keeps things simple
 
@@ -112,9 +115,13 @@ const CartDrawer = ({ isOpen, onClose }) => {
               </span>
             </div>
             <button
-              // checkout page / place_order() call comes in Day 8-9 —
-              // for now this is a placeholder so the UI isn't a dead end
-              onClick={() => alert('Checkout will be wired up in the next milestone (Day 8-9).')}
+              // Placing an order requires knowing which branch to send it
+              // to, so hand off to the dedicated checkout page rather than
+              // trying to cram branch/address/payment selection in here.
+              onClick={() => {
+                onClose()
+                navigate('/checkout')
+              }}
               className="w-full bg-green-700 text-white py-3 rounded-lg
                          font-semibold hover:bg-green-800 transition-colors"
             >
