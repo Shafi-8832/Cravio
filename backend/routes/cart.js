@@ -2,6 +2,7 @@ const express = require('express')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
+const { parseId } = require('../utils/validation')
 
 const router = express.Router()
 
@@ -19,8 +20,14 @@ router.get(
   requireRole('customer'),
   async (req, res) => {
 
-    const restaurantId = Number(req.params.restaurantId)
+    const restaurantId = parseId(req.params.restaurantId)
     const userId = req.user.id
+
+    if (restaurantId === null) {
+      return res.status(400).json({
+        error: 'Invalid restaurant ID.'
+      })
+    }
 
     /*  INNER JOIN ব্যবহার করলে
     এখন বোঝা যাবে না:
@@ -561,7 +568,13 @@ router.delete(
   async(req,res)=>{
 
 
-    const {itemId}=req.params
+    const itemId = parseId(req.params.itemId)
+
+    if (itemId === null) {
+      return res.status(400).json({
+        error: 'Invalid cart item ID.'
+      })
+    }
 
 
     /* the condition AND ci.cart_id = c.id is important

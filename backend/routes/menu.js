@@ -2,6 +2,7 @@ const express = require('express')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
+const { parseId } = require('../utils/validation')
 
 const router = express.Router()
 
@@ -12,7 +13,13 @@ const router = express.Router()
 // Returns restaurant + categories + menu items
 // ============================================================
 router.get('/restaurants/:restaurantId', async (req, res) => {
-  const { restaurantId } = req.params // fetch the restaurant ID from the browsers URL
+  const restaurantId = parseId(req.params.restaurantId) // fetch the restaurant ID from the browsers URL
+
+  if (restaurantId === null) {
+    return res.status(400).json({
+      error: 'Invalid restaurant ID.'
+    })
+  }
 
   try {
     // Check that restaurant exists
@@ -123,8 +130,14 @@ router.post( // every HTTP call needs to be verified.
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { restaurantId } = req.params // fetch the ID from the browser URL
+    const restaurantId = parseId(req.params.restaurantId) // fetch the ID from the browser URL
     const { name } = req.body
+
+    if (restaurantId === null) {
+      return res.status(400).json({
+        error: 'Invalid restaurant ID.'
+      })
+    }
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -196,7 +209,7 @@ router.post(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { categoryId } = req.params
+    const categoryId = parseId(req.params.categoryId)
 
     const {
       name,
@@ -205,6 +218,12 @@ router.post(
       image_url,
       is_veg
     } = req.body
+
+    if (categoryId === null) {
+      return res.status(400).json({
+        error: 'Invalid category ID.'
+      })
+    }
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -311,7 +330,7 @@ router.patch(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { itemId } = req.params
+    const itemId = parseId(req.params.itemId)
 
     const {
       name,
@@ -320,6 +339,12 @@ router.patch(
       image_url,
       is_veg
     } = req.body
+
+    if (itemId === null) {
+      return res.status(400).json({
+        error: 'Invalid menu item ID.'
+      })
+    }
 
     if (
       price !== undefined &&
@@ -418,7 +443,13 @@ router.patch(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { itemId } = req.params
+    const itemId = parseId(req.params.itemId)
+
+    if (itemId === null) {
+      return res.status(400).json({
+        error: 'Invalid menu item ID.'
+      })
+    }
 
     try {
 
@@ -497,7 +528,13 @@ router.delete(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { itemId } = req.params
+    const itemId = parseId(req.params.itemId)
+
+    if (itemId === null) {
+      return res.status(400).json({
+        error: 'Invalid menu item ID.'
+      })
+    }
 
     try {
       const itemResult = await pool.query(`

@@ -2,6 +2,7 @@ const express = require('express')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
+const { parseId } = require('../utils/validation')
 
 const router = express.Router()
 
@@ -125,7 +126,13 @@ router.get(
 // Returns one restaurant + branches + menu categories
 // ============================================================
 router.get('/:id', async (req, res) => {
-  const { id } = req.params
+  const id = parseId(req.params.id)
+
+  if (id === null) {
+    return res.status(400).json({
+      error: 'Invalid restaurant ID.'
+    })
+  }
 
   try {
     const restaurantResult = await pool.query(`
@@ -254,7 +261,7 @@ router.post(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { id } = req.params
+    const id = parseId(req.params.id)
 
     const {
       address,
@@ -264,6 +271,12 @@ router.post(
       latitude,
       longitude
     } = req.body
+
+    if (id === null) {
+      return res.status(400).json({
+        error: 'Invalid restaurant ID.'
+      })
+    }
 
     if (!address || !area || !city) {
       return res.status(400).json({
@@ -350,7 +363,13 @@ router.patch(
   requireRole('restaurant_owner', 'admin'),
   async (req, res) => {
 
-    const { branchId } = req.params
+    const branchId = parseId(req.params.branchId)
+
+    if (branchId === null) {
+      return res.status(400).json({
+        error: 'Invalid branch ID.'
+      })
+    }
 
     const client = await pool.connect()
 
