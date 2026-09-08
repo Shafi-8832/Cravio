@@ -278,12 +278,17 @@ router.patch(
         })
       }
 
+      // Both uses of $1 are cast explicitly. Without the casts Postgres infers
+      // the parameter's type twice and disagrees with itself — varchar from the
+      // assignment to delivery_status, text from the comparison in the CASE —
+      // and rejects the whole statement with 42P08 "inconsistent types deduced
+      // for parameter $1".
       await client.query(`
         UPDATE deliveries
         SET
-          delivery_status = $1,
+          delivery_status = $1::varchar,
           delivery_time = CASE
-            WHEN $1 = 'delivered' THEN CURRENT_TIMESTAMP
+            WHEN $1::varchar = 'delivered' THEN CURRENT_TIMESTAMP
             ELSE delivery_time
           END
         WHERE order_id = $2
@@ -294,6 +299,20 @@ router.patch(
           UPDATE orders
           SET status = 'delivered', review_eligible = true
           WHERE id = $1
+        `, [orderId])
+
+        // Cash is handed to the rider at the door, so delivery IS the payment
+        // event for COD — there is no separate confirmation step to wait for.
+        // Online methods are left alone: those are settled by the restaurant
+        // verifying the transaction reference (see routes/payments.js).
+        await client.query(`
+          UPDATE payments
+          SET
+            status = 'paid',
+            paid_at = CURRENT_TIMESTAMP
+          WHERE order_id = $1
+            AND method = 'cash_on_delivery'
+            AND status = 'unpaid'
         `, [orderId])
       }
 
