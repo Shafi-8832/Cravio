@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import StarRating from '../components/StarRating'
 import LoadingSpinner from '../components/LoadingSpinner'
+import ModifierPicker from '../components/ModifierPicker'
 import { useCart } from '../context/CartContext' // NEW: to add items to the cart
 import { useAuth } from '../context/AuthContext'
 import api from '../utils/api'
@@ -16,6 +17,13 @@ const RestaurantPage = () => {
   const [menu, setMenu] = useState([])                // NEW: categories WITH their items
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // The item whose modifier picker is currently open, or null for none.
+  const [pickerItem, setPickerItem] = useState(null)
+
+  // Message shown when an add is rejected — e.g. an option sold out between
+  // loading the menu and pressing Add.
+  const [addError, setAddError] = useState('')
 
   useEffect(() => {
     const fetchRestaurant = async () => {
@@ -64,9 +72,37 @@ const RestaurantPage = () => {
     fetchRestaurant()
   }, [id]) // re-run if the URL's :id changes
 
-  // NEW: handles the "Add" button click for a single menu item
-  const handleAddToCart = (item) => {
-    addItem(item, restaurant.id, restaurant.name) // pass item + which restaurant it belongs to
+  // Handles the "Add" button click for a single menu item.
+  //
+  // A dish with modifier groups cannot be added straight from the menu: the
+  // backend rejects it if a required group is unanswered. So those open the
+  // picker first, and only the picker's confirm actually adds.
+  const handleAddToCart = async (item) => {
+    setAddError('')
+
+    if (item.modifier_groups?.length > 0) {
+      setPickerItem(item)
+      return
+    }
+
+    try {
+      await addItem(item, restaurant.id)
+    } catch (err) {
+      setAddError(err.response?.data?.error || 'Could not add that item.')
+    }
+  }
+
+  // Called by the picker once a valid selection has been made.
+  const handleConfirmModifiers = async (modifierOptionIds) => {
+    try {
+      await addItem(pickerItem, restaurant.id, modifierOptionIds)
+      setPickerItem(null)
+    } catch (err) {
+      // Keep the picker open so the customer can adjust their choice rather
+      // than losing it — the usual cause is an option selling out.
+      setAddError(err.response?.data?.error || 'Could not add that item.')
+      setPickerItem(null)
+    }
   }
 
   if (loading) return <LoadingSpinner message="Loading restaurant..." />
@@ -175,6 +211,13 @@ const RestaurantPage = () => {
           🍴 Menu
         </h2>
 
+        {addError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50
+                          px-4 py-3 text-sm text-red-700">
+            {addError}
+          </div>
+        )}
+
         {menu.length === 0 ? (
           // no categories at all yet
           <div className="bg-white rounded-xl p-6 text-center 
@@ -216,6 +259,13 @@ const RestaurantPage = () => {
                         )}
                         <p className="text-sm font-semibold text-gray-700 mt-1">
                           ৳{Number(item.price).toFixed(2)}
+                          {/* Signals that the price is a starting point and
+                              that pressing Add will ask a question first. */}
+                          {item.modifier_groups?.length > 0 && (
+                            <span className="text-gray-400 font-normal">
+                              {' '}• customisable
+                            </span>
+                          )}
                         </p>
                       </div>
 
@@ -228,7 +278,9 @@ const RestaurantPage = () => {
                                    transition-colors disabled:opacity-40
                                    disabled:cursor-not-allowed disabled:hover:bg-green-700"
                       >
-                        {item.is_available ? 'Add' : 'Unavailable'}
+                        {item.is_available
+                          ? (item.modifier_groups?.length > 0 ? 'Choose' : 'Add')
+                          : 'Unavailable'}
                       </button>)}
 
                     </div>
@@ -239,6 +291,14 @@ const RestaurantPage = () => {
           ))
         )}
       </div>
+
+      {pickerItem && (
+        <ModifierPicker
+          item={pickerItem}
+          onCancel={() => setPickerItem(null)}
+          onConfirm={handleConfirmModifiers}
+        />
+      )}
 
     </div>
   )

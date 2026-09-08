@@ -38,13 +38,20 @@ const [restaurant,setRestaurant] = useState(null)
 
     // add new item
 
-    const addItem = async(menuItem,id)=>{
+    // modifierOptionIds defaults to [] so callers that don't deal with
+    // modifiers (or items that have none) keep working unchanged.
+    //
+    // Errors are deliberately NOT swallowed here: the backend rejects an add
+    // that misses a required modifier group, and the page needs to see that
+    // so it can tell the customer instead of failing silently.
+    const addItem = async(menuItem,id,modifierOptionIds = [])=>{
 
 
         await addCartItem(
             id,
             menuItem.id,
-            1
+            1,
+            modifierOptionIds
         )
 
 
@@ -145,10 +152,13 @@ const itemCount =
 
 
 
+    // line_total comes from the backend and already includes the chosen
+    // modifiers. Multiplying item.price by quantity here would ignore them and
+    // under-report the total against what checkout actually charges.
     const cartTotal =
     items.reduce(
         (sum,item)=>
-        sum + Number(item.price)*item.quantity,
+        sum + Number(item.line_total ?? Number(item.price)*item.quantity),
         0
     )
 

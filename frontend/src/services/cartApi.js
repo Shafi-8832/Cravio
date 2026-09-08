@@ -6,12 +6,21 @@ export const getCart = (restaurantId) => {
 }
 
 
-export const addCartItem = (restaurantId, menu_item_id, quantity = 1) => {
+// modifier_option_ids carries the customer's chosen options ("Large",
+// "Extra cheese"). Items with no modifier groups just send an empty array,
+// which the backend treats exactly like the old no-modifiers request.
+export const addCartItem = (
+    restaurantId,
+    menu_item_id,
+    quantity = 1,
+    modifier_option_ids = []
+) => {
     return api.post(
         `/api/cart/${restaurantId}/items`,
         {
             menu_item_id,
-            quantity
+            quantity,
+            modifier_option_ids
         }
     )
 }

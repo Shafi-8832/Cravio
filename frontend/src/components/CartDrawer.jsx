@@ -56,13 +56,26 @@ const CartDrawer = ({ isOpen, onClose }) => {
               {/* one row per cart line item */}
               {items.map(item => (
                 <div
-                  key={item.id} // React needs a unique key per list item
+                  // cart lines carry cart_item_id, not id — item.id was
+                  // undefined for every row, so React saw duplicate keys.
+                  key={item.cart_item_id}
                   className="flex items-center justify-between py-3 border-b border-gray-50"
                 >
                   <div className="flex-1 pr-3">
                     <p className="font-medium text-gray-800 text-sm">{item.name}</p>
+
+                    {/* The chosen modifiers are what distinguishes two lines of
+                        the same dish, so they have to be visible here. */}
+                    {item.modifiers?.length > 0 && (
+                      <p className="text-gray-400 text-xs mt-0.5">
+                        {item.modifiers.map(m => m.name).join(', ')}
+                      </p>
+                    )}
+
                     <p className="text-gray-400 text-xs">
-                      ৳{Number(item.price).toFixed(2)} each {/* unit price */}
+                      {/* unit_price includes modifiers; fall back to the bare
+                          menu price for items that have none. */}
+                      ৳{Number(item.unit_price ?? item.price).toFixed(2)} each
                     </p>
                   </div>
 
