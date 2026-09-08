@@ -1,2 +1,9 @@
 node_modules/
-.env.DS_Store
+
+# Secrets — DATABASE_URL and JWT_SECRET live here, never commit them.
+.env
+.env.*
+!.env.example
+
+# macOS finder metadata
+.DS_Store
