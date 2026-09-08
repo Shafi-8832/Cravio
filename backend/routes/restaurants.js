@@ -17,13 +17,32 @@ router.get('/', async (req, res) => {
     const { area, city } = req.query
 
     // 1. Base query (no WHERE clause yet)
+    // restaurants.avg_rating is commented out in the schema, so the rating is
+    // computed from restaurant_reviews instead of being denormalised onto the
+    // row. Reviews hang off orders, not restaurants, so they are reached via a
+    // correlated subquery — joining them into the main query here would
+    // multiply the branch rows and break branch_count.
     let queryText = `
-      SELECT 
-        r.id, 
-        r.name, 
+      SELECT
+        r.id,
+        r.name,
         r.created_at,
         u.name AS owner_name,
-        COUNT(rb.id) AS branch_count
+        COUNT(rb.id) AS branch_count,
+        (
+          SELECT ROUND(AVG(rev.rating), 2)
+          FROM restaurant_reviews rev
+          JOIN orders o ON o.id = rev.order_id
+          JOIN restaurant_branches b ON b.id = o.branch_id
+          WHERE b.restaurant_id = r.id
+        ) AS average_rating,
+        (
+          SELECT COUNT(*)::INTEGER
+          FROM restaurant_reviews rev
+          JOIN orders o ON o.id = rev.order_id
+          JOIN restaurant_branches b ON b.id = o.branch_id
+          WHERE b.restaurant_id = r.id
+        ) AS review_count
       FROM restaurants r
       JOIN users u ON r.owner_id = u.id
       LEFT JOIN restaurant_branches rb ON r.id = rb.restaurant_id
@@ -141,7 +160,21 @@ router.get('/:id', async (req, res) => {
         r.name,
         r.created_at,
         u.name AS owner_name,
-        u.phone AS owner_phone
+        u.phone AS owner_phone,
+        (
+          SELECT ROUND(AVG(rev.rating), 2)
+          FROM restaurant_reviews rev
+          JOIN orders o ON o.id = rev.order_id
+          JOIN restaurant_branches b ON b.id = o.branch_id
+          WHERE b.restaurant_id = r.id
+        ) AS average_rating,
+        (
+          SELECT COUNT(*)::INTEGER
+          FROM restaurant_reviews rev
+          JOIN orders o ON o.id = rev.order_id
+          JOIN restaurant_branches b ON b.id = o.branch_id
+          WHERE b.restaurant_id = r.id
+        ) AS review_count
       FROM restaurants r
       JOIN users u
         ON r.owner_id = u.id
