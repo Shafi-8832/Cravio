@@ -173,8 +173,19 @@ CREATE TABLE restaurants (
     name VARCHAR(100)
         NOT NULL,
 
-    -- avg_rating DECIMAL(2,1)
-    --     DEFAULT 0.0,
+    -- Both columns are derived from restaurant_reviews and are maintained
+    -- by the trigger in db/functions/restaurant_rating.sql — never written
+    -- by application code. Stored rather than computed on every read
+    -- because ratings are read on almost every page and written only when
+    -- a delivered order is reviewed.
+    --
+    -- avg_rating is nullable on purpose: NULL means "not yet rated", which
+    -- a default of 0.0 would misreport as the worst possible score.
+    avg_rating NUMERIC(3,2),
+
+    review_count INTEGER
+        NOT NULL
+        DEFAULT 0,
 
     created_at TIMESTAMP
         DEFAULT CURRENT_TIMESTAMP

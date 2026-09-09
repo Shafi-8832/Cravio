@@ -231,8 +231,13 @@ router.get(
     }
 
     try {
+      // This doubles as the existence check and as the rating summary: the
+      // summary used to be a separate aggregate over the same three-table
+      // path as the list below, but avg_rating and review_count are now kept
+      // on the restaurant row by trg_sync_restaurant_rating
+      // (db/functions/restaurant_rating.sql).
       const restaurantResult = await pool.query(
-        'SELECT id FROM restaurants WHERE id = $1',
+        'SELECT id, avg_rating, review_count FROM restaurants WHERE id = $1',
         [restaurantId]
       )
 
@@ -265,26 +270,11 @@ router.get(
         [restaurantId]
       )
 
-      const summaryResult = await pool.query(
-        `
-          SELECT
-            COUNT(*)::INTEGER AS review_count,
-            ROUND(AVG(rev.rating), 2) AS average_rating
-          FROM restaurant_reviews rev
-          JOIN orders o
-            ON o.id = rev.order_id
-          JOIN restaurant_branches rb
-            ON rb.id = o.branch_id
-          WHERE rb.restaurant_id = $1
-        `,
-        [restaurantId]
-      )
-
       res.json({
         reviews: reviewsResult.rows,
         summary: {
-          review_count: summaryResult.rows[0].review_count,
-          average_rating: summaryResult.rows[0].average_rating
+          review_count: restaurantResult.rows[0].review_count,
+          average_rating: restaurantResult.rows[0].avg_rating
         }
       })
 

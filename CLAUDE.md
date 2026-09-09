@@ -28,7 +28,17 @@ Database setup — order matters, and `schema.sql` starts with a `DROP TABLE ...
 
 ```bash
 psql "$DATABASE_URL" -f backend/db/schema.sql
-psql "$DATABASE_URL" -f backend/db/functions/place_order.sql   # function + indexes; run after schema
+psql "$DATABASE_URL" -f backend/db/functions/place_order.sql        # function + indexes; run after schema
+psql "$DATABASE_URL" -f backend/db/functions/restaurant_rating.sql  # rating function + trigger + backfill; run last
+```
+
+`restaurant_rating.sql` goes last because its backfill reads `restaurants`, `restaurant_reviews`, `orders` and `restaurant_branches`, and it writes the `restaurants.avg_rating` / `review_count` columns that `schema.sql` creates. It is independent of `place_order.sql` — the order between those two does not matter.
+
+For an **existing** database that predates those columns, run the migration first (it only adds the columns), then the same file:
+
+```bash
+psql "$DATABASE_URL" -f backend/db/migrations/002_restaurant_ratings.sql
+psql "$DATABASE_URL" -f backend/db/functions/restaurant_rating.sql
 ```
 
 ## Architecture
@@ -58,6 +68,12 @@ Frontend counterpart is `frontend/src/utils/api.js`: a single axios instance who
 `backend/services/orderService.js` opens the transaction, calls the function, and maps each exception name through `CHECKOUT_ERROR_MAP` to an HTTP status + client-facing `code` + message. **To add a checkout rule, add the `RAISE` in the SQL function and its entry in `CHECKOUT_ERROR_MAP`** — the route layer (`routes/orders.js`) just forwards `OrderServiceError` via `sendError`.
 
 Orders is the only domain with a service layer; the other routes query `pool` directly.
+
+### Ratings are stored, not computed
+
+`restaurants.avg_rating` and `restaurants.review_count` are derived from `restaurant_reviews` but kept on the restaurant row, because ratings are read on nearly every page and written only when a delivered order is reviewed. Application code **never writes them**: the `trg_sync_restaurant_rating` trigger on `restaurant_reviews` (INSERT/UPDATE/DELETE) recomputes them in the same transaction as the review change, using the `restaurant_avg_rating(restaurant_id)` function. Both live in `backend/db/functions/restaurant_rating.sql`.
+
+Reviews carry no `restaurant_id`, so anything relating the two walks `restaurant_reviews → orders → restaurant_branches → restaurants`. Read endpoints (`routes/restaurants.js`, `routes/reviews.js`) select the stored columns instead of re-walking that path.
 
 ### Order and delivery state machines
 
