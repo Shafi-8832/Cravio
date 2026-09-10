@@ -1,3 +1,9 @@
+async function runSequentially(jobs) {
+  const results = []
+  for (const job of jobs) results.push(await job())
+  return results
+}
+
 const pool = require('../db/pool')
 
 class OrderServiceError extends Error {
@@ -35,6 +41,9 @@ const CUSTOMER_STATUS_TRANSITIONS = {
 // are mapped to a more user-friendly error message and status code here. 
 // This allows the application to provide more meaningful feedback to the user when an error occurs during the checkout process.
 const CHECKOUT_ERROR_MAP = {
+  RESTAURANT_NOT_ORDERABLE: [409, 'RESTAURANT_NOT_ORDERABLE', 'This restaurant is listed for reference and is not accepting orders.'],
+  CART_MODIFIERS_CHANGED: [409, 'CART_MODIFIERS_CHANGED', 'Menu options changed. Remove and add the affected item again.'],
+  BRANCH_MINIMUM_NOT_MET: [409, 'BRANCH_MINIMUM_NOT_MET', 'The cart does not meet this branch minimum order amount.'],
   CUSTOMER_NOT_FOUND_OR_INVALID_ROLE: [
     403,
     'CUSTOMER_REQUIRED',
@@ -230,6 +239,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
         o.delivery_address,
         o.subtotal,
         o.discount_amount,
+        o.delivery_fee,
         o.total_amount,
         o.review_eligible,
         o.created_at,
@@ -267,13 +277,14 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
     )
   }
 
-  const [itemsResult, paymentResult, deliveryResult] = await Promise.all([
-    db.query(
+  const [itemsResult, paymentResult, deliveryResult, timelineResult] = await runSequentially([
+    () => db.query(
       `
         SELECT
           oi.id,
           oi.menu_item_id,
-          mi.name,
+          COALESCE(oi.item_name, mi.name) AS name,
+          oi.image_url,
           oi.quantity,
           oi.unit_price,
           line.modifier_total,
@@ -308,7 +319,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
       `,
       [orderId]
     ),
-    db.query(
+    () => db.query(
       `
         SELECT
           id,
@@ -322,7 +333,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
       `,
       [orderId]
     ),
-    db.query(
+    () => db.query(
       `
         SELECT
           d.id,
@@ -338,7 +349,8 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
         WHERE d.order_id = $1
       `,
       [orderId]
-    )
+    ),
+    () => db.query('SELECT status, note, created_at FROM order_events WHERE order_id = $1 ORDER BY id', [orderId])
   ])
 
   const row = orderResult.rows[0]
@@ -349,6 +361,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
     delivery_address: row.delivery_address,
     subtotal: row.subtotal,
     discount_amount: row.discount_amount,
+    delivery_fee: row.delivery_fee,
     total_amount: row.total_amount,
     review_eligible: row.review_eligible,
     created_at: row.created_at,
@@ -375,6 +388,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
       }
     },
     items: itemsResult.rows,
+    timeline: timelineResult.rows,
     payment: paymentResult.rows[0] || null,
     delivery: deliveryResult.rows[0] || null
   }
@@ -414,6 +428,10 @@ const placeOrder = async (customerId, payload, database = pool) => {
       'VALIDATION_ERROR',
       'payment_method must be cash_on_delivery, bkash, or nagad.'
     )
+  }
+
+  if (paymentMethod !== 'cash_on_delivery' && process.env.ALLOW_MANUAL_PAYMENTS !== 'true') {
+    throw new OrderServiceError(409, 'PAYMENT_METHOD_DISABLED', 'Mobile payments are not enabled. Choose cash on delivery.')
   }
 
   const client = await database.connect()
@@ -480,6 +498,7 @@ const listCustomerOrders = async (
         o.status,
         o.subtotal,
         o.discount_amount,
+        o.delivery_fee,
         o.total_amount,
         o.delivery_address,
         o.created_at,
@@ -581,7 +600,8 @@ const listRestaurantOrders = async (
           json_build_object(
             'id', oi.id,
             'menu_item_id', oi.menu_item_id,
-            'name', mi.name,
+            'name', COALESCE(oi.item_name, mi.name),
+            'image_url', oi.image_url,
             'quantity', oi.quantity,
             'unit_price', oi.unit_price
           )
@@ -708,6 +728,20 @@ const updateOrderStatus = async (
         'INVALID_STATUS_TRANSITION',
         `Order status cannot change from ${currentOrder.status} to ${newStatus}.`
       )
+    }
+
+    if (newStatus === 'confirmed') {
+      const payment = await client.query('SELECT method,status FROM payments WHERE order_id=$1 FOR UPDATE', [orderId])
+      if (payment.rows[0]?.method !== 'cash_on_delivery' && payment.rows[0]?.status !== 'paid') {
+        throw new OrderServiceError(409, 'PAYMENT_NOT_VERIFIED', 'Verify the mobile payment reference before confirming the order.')
+      }
+    }
+
+    if (newStatus === 'cancelled') {
+      const payment = await client.query('SELECT status FROM payments WHERE order_id = $1 FOR UPDATE', [orderId])
+      if (payment.rows[0]?.status === 'paid') {
+        throw new OrderServiceError(409, 'REFUND_REQUIRED', 'Payment is already received. Contact support to arrange a refund before cancellation.')
+      }
     }
 
     await client.query(

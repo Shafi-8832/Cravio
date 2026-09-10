@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "notice": "Five example branches listed by the official KFC Bangladesh store locator when researched on 2026-09-09. Not an exhaustive directory, not partners, and not orderable through Cravio. No official menu, prices or photos have been copied.",
+  "restaurants": [
+    {
+      "catalog_slug": "directory-kfc-bangladesh",
+      "name": "KFC Bangladesh",
+      "description": "Directory listing from the official store locator. This business has not been onboarded to Cravio; ordering is unavailable.",
+      "cuisine": "Fried Chicken",
+      "is_demo": false,
+      "ordering_enabled": false,
+      "owner_email": null,
+      "source_url": "https://kfcbd.com/store-locator",
+      "verified_at": "2026-09-09T00:00:00Z",
+      "branches": [
+        {
+          "city": "Dhaka",
+          "division": "Dhaka",
+          "area": "Banani",
+          "address": "Bulu Ocean Tower, 40 Kemal Atartuk Avenue, Dhaka 1213",
+          "phone": "09613777222",
+          "is_open": false,
+          "latitude": null,
+          "longitude": null
+        },
+        {
+          "city": "Chattogram",
+          "division": "Chattogram",
+          "area": "East Nasirabad",
+          "address": "1618/1839, Rahima Center, East Nasirabad, Pachlaish, CDA Avenue, Chattogram 4000",
+          "phone": "09613666777",
+          "is_open": false,
+          "latitude": null,
+          "longitude": null
+        },
+        {
+          "city": "Rajshahi",
+          "division": "Rajshahi",
+          "area": "Alu Potti Mor",
+          "address": "The Sun, Ground Floor, Alu Potti Mor, Rajshahi 6100",
+          "phone": "09613885588",
+          "is_open": false,
+          "latitude": null,
+          "longitude": null
+        },
+        {
+          "city": "Khulna",
+          "division": "Khulna",
+          "area": "Sonadanga",
+          "address": "ES Plaza, 1st Floor, Holding 22, Faraji Para Road, Dal Mill More, Moilapota, Sonadanga, Khulna 9100",
+          "phone": "09613888666",
+          "is_open": false,
+          "latitude": null,
+          "longitude": null
+        },
+        {
+          "city": "Barishal",
+          "division": "Barishal",
+          "area": "Kotwali",
+          "address": "Icon Tower, 1st Floor, 845 Bagura Road, Kotwali, Barishal Sadar, Barishal 8200",
+          "phone": "09613885555",
+          "is_open": false,
+          "latitude": null,
+          "longitude": null
+        }
+      ],
+      "categories": []
+    }
+  ]
+}

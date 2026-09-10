@@ -19,7 +19,7 @@ router.post('/signup', async (req, res) => {
   const { name, email, password, role, phone } = req.body
 
 
-  if (!name || !email || !password || !role || !phone) {
+  if (![name, email, password, role, phone].every(value => typeof value === 'string' && value.trim())) {
     return res.status(400).json({
       error: 'All fields are required.'
     })
@@ -31,7 +31,7 @@ router.post('/signup', async (req, res) => {
   const trimmedPhone = String(phone).trim()
 
 
-  if (!trimmedName || !trimmedEmail || !trimmedPhone) {
+  if (!trimmedName || trimmedName.length > 100 || !trimmedEmail || trimmedEmail.length > 100 || !/^[0-9+\-\s()]{7,20}$/.test(trimmedPhone)) {
     return res.status(400).json({
       error: 'All fields are required.'
     })
@@ -47,9 +47,9 @@ router.post('/signup', async (req, res) => {
   }
 
 
-  if (typeof password !== 'string' || password.length < 8) {
+  if (typeof password !== 'string' || password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
     return res.status(400).json({
-      error: 'Password must be at least 8 characters.'
+      error: 'Password must be at least 8 characters and at most 72 UTF-8 bytes.'
     })
   }
 
@@ -87,13 +87,13 @@ router.post('/signup', async (req, res) => {
       await client.query('ROLLBACK')
 
       return res.status(409).json({
-        error:'Email already registered.'
+        error: 'Email already registered.'
       })
 
     }
 
 
-    const hashedPassword = await bcrypt.hash(password,10)
+    const hashedPassword = await bcrypt.hash(password, 10)
 
 
     const result = await client.query(
@@ -132,7 +132,7 @@ router.post('/signup', async (req, res) => {
     const user = result.rows[0]
 
 
-    if(role === 'rider'){
+    if (role === 'rider') {
 
       await client.query(
 
@@ -162,7 +162,7 @@ router.post('/signup', async (req, res) => {
     await client.query('COMMIT')
 
 
-    if(!process.env.JWT_SECRET){
+    if (!process.env.JWT_SECRET) {
       throw new Error("JWT_SECRET missing")
     }
 
@@ -173,16 +173,16 @@ router.post('/signup', async (req, res) => {
     const token = jwt.sign(
 
       {
-        id:user.id,
-        email:user.email,
-        role:user.role,
+        id: user.id,
+        email: user.email,
+        role: user.role,
         jti
       },
 
       process.env.JWT_SECRET,
 
       {
-        expiresIn:'7d'
+        expiresIn: '7d'
       }
 
     )
@@ -198,7 +198,7 @@ router.post('/signup', async (req, res) => {
 
   }
 
-  catch(error){
+  catch (error) {
 
     await client.query('ROLLBACK')
 
@@ -208,15 +208,17 @@ router.post('/signup', async (req, res) => {
     )
 
 
+    if (error.code === '23505') return res.status(409).json({ error: 'Email already registered.' })
+
     res.status(500).json({
 
-      error:error.message
+      error: 'Server error processing authentication.'
 
     })
 
   }
 
-  finally{
+  finally {
 
     client.release()
 
@@ -235,7 +237,7 @@ router.post('/signup', async (req, res) => {
 // ============================================================
 
 
-router.post('/login', async(req,res)=>{
+router.post('/login', async (req, res) => {
 
 
   const {
@@ -245,11 +247,11 @@ router.post('/login', async(req,res)=>{
 
 
 
-  if(!email || !password){
+  if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password || email.length > 100 || Buffer.byteLength(password, 'utf8') > 72) {
 
     return res.status(400).json({
 
-      error:"Email and password are required."
+      error: "Email and password are required."
 
     })
 
@@ -259,12 +261,12 @@ router.post('/login', async(req,res)=>{
 
   const trimmedEmail =
     String(email)
-    .trim()
-    .toLowerCase()
+      .trim()
+      .toLowerCase()
 
 
 
-  try{
+  try {
 
 
     const result = await pool.query(
@@ -279,11 +281,11 @@ router.post('/login', async(req,res)=>{
 
 
 
-    if(result.rows.length===0){
+    if (result.rows.length === 0) {
 
       return res.status(401).json({
 
-        error:"Invalid email or password."
+        error: "Invalid email or password."
 
       })
 
@@ -291,7 +293,7 @@ router.post('/login', async(req,res)=>{
 
 
 
-    const user=result.rows[0]
+    const user = result.rows[0]
 
 
 
@@ -306,11 +308,11 @@ router.post('/login', async(req,res)=>{
 
 
 
-    if(!validPassword){
+    if (!validPassword) {
 
       return res.status(401).json({
 
-        error:"Invalid email or password."
+        error: "Invalid email or password."
 
       })
 
@@ -319,11 +321,11 @@ router.post('/login', async(req,res)=>{
 
 
 
-    if(!user.is_active){
+    if (!user.is_active) {
 
       return res.status(403).json({
 
-        error:"Your account has been suspended."
+        error: "Your account has been suspended."
 
       })
 
@@ -332,7 +334,7 @@ router.post('/login', async(req,res)=>{
 
 
 
-    if(!process.env.JWT_SECRET){
+    if (!process.env.JWT_SECRET) {
 
       throw new Error(
         "JWT_SECRET missing in .env"
@@ -344,7 +346,7 @@ router.post('/login', async(req,res)=>{
 
     const jti =
       crypto.randomBytes(16)
-      .toString('hex')
+        .toString('hex')
 
 
 
@@ -352,9 +354,9 @@ router.post('/login', async(req,res)=>{
 
       {
 
-        id:user.id,
-        email:user.email,
-        role:user.role,
+        id: user.id,
+        email: user.email,
+        role: user.role,
         jti
 
       },
@@ -362,7 +364,7 @@ router.post('/login', async(req,res)=>{
       process.env.JWT_SECRET,
 
       {
-        expiresIn:'7d'
+        expiresIn: '7d'
       }
 
     )
@@ -370,7 +372,7 @@ router.post('/login', async(req,res)=>{
 
 
     const {
-      password:_,
+      password: _,
       ...userWithoutPassword
     } = user
 
@@ -380,7 +382,7 @@ router.post('/login', async(req,res)=>{
 
       token,
 
-      user:userWithoutPassword
+      user: userWithoutPassword
 
     })
 
@@ -388,7 +390,7 @@ router.post('/login', async(req,res)=>{
 
   }
 
-  catch(error){
+  catch (error) {
 
 
     console.error(
@@ -400,7 +402,7 @@ router.post('/login', async(req,res)=>{
 
     res.status(500).json({
 
-      error:error.message
+      error: 'Server error processing authentication.'
 
     })
 
@@ -422,96 +424,52 @@ router.post('/login', async(req,res)=>{
 
 
 router.post(
-'/logout',
-authenticateToken,
-async(req,res)=>{
+  '/logout',
+  authenticateToken,
+  async (req, res) => {
 
 
-try{
+    try {
 
 
-await pool.query(
+      await pool.query(`
+        WITH cleanup AS (DELETE FROM revoked_tokens WHERE expires_at < CURRENT_TIMESTAMP)
+        INSERT INTO revoked_tokens (jti, user_id, expires_at)
+        VALUES ($1, $2, to_timestamp($3)) ON CONFLICT (jti) DO NOTHING
+      `, [req.user.jti, req.user.id, req.user.exp])
 
-`
+      res.json({
 
-INSERT INTO revoked_tokens
+        message: "Logged out successfully."
 
-(
-jti,
-user_id,
-expires_at
-)
-
-VALUES
-
-(
-$1,
-$2,
-to_timestamp($3)
-)
-
-`,
-
-[
-// atik
-req.user.jti,
-
-req.user.id,
-
-req.user.exp
-
-]
-
-)
+      })
 
 
 
-await pool.query(
+    }
 
-`
+    catch (error) {
 
-DELETE FROM revoked_tokens
 
-WHERE expires_at < CURRENT_TIMESTAMP
-
-`
-
-)
+      console.error(
+        "LOGOUT ERROR:",
+        error
+      )
 
 
 
-res.json({
+      res.status(500).json({
 
-message:"Logged out successfully."
+        error: "Server error during logout."
 
-})
-
-
-
-}
-
-catch(error){
+      })
 
 
-console.error(
-"LOGOUT ERROR:",
-error
-)
+    }
 
 
 
-res.status(500).json({
-
-error:"Server error during logout."
-
-})
-
-
-}
-
-
-
-})
+  })
 
 
 

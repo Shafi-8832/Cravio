@@ -1,171 +1,45 @@
-import { useState, useEffect, useCallback } from 'react'
-import LoadingSpinner from '../components/LoadingSpinner'
-import { getUsers, updateUserStatus, getStats } from '../services/adminApi'
-
-const ROLE_LABELS = {
-  customer: 'Customer',
-  restaurant_owner: 'Restaurant Owner',
-  rider: 'Rider',
-  admin: 'Admin'
-}
-
-const AdminDashboardPage = () => {
-  const [stats, setStats] = useState(null)
+import { useCallback, useEffect, useState } from 'react'
+import { getUsers, updateUserStatus } from '../services/adminApi'
+import { getPromos, createPromo, togglePromo, getPlatformOrders } from '../services/operationsApi'
+import BusinessSummary from '../components/BusinessSummary'
+import SupportPanel from '../components/SupportPanel'
+import OrderReceipt from '../components/OrderReceipt'
+import { useAuth } from '../context/AuthContext'
+import { errorMessage, money } from '../utils/format'
+const emptyPromo = { code: '', discount_percent: 10, min_order_amount: 0, expiry_date: '', usage_limit: 100 }
+export default function AdminDashboardPage() {
+  const { user } = useAuth()
+  const [tab, setTab] = useState('orders')
   const [users, setUsers] = useState([])
-  const [roleFilter, setRoleFilter] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [orders, setOrders] = useState([])
+  const [promos, setPromos] = useState([])
+  const [form, setForm] = useState(emptyPromo)
+  const [role, setRole] = useState('')
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-
-  const flashNotice = (message) => {
-    setNotice(message)
-    setTimeout(() => setNotice(''), 3000)
-  }
-
-  const loadUsers = useCallback(async () => {
+  const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState(null)
+  const load = useCallback(async () => {
     try {
-      const res = await getUsers({ role: roleFilter || undefined })
-      setUsers(res.data.users)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load users.')
-    }
-  }, [roleFilter])
-
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      setError('')
-
-      try {
-        const [usersRes, statsRes] = await Promise.all([
-          getUsers({ role: roleFilter || undefined }),
-          getStats()
-        ])
-        setUsers(usersRes.data.users)
-        setStats(statsRes.data)
-      } catch (err) {
-        setError(err.response?.data?.error || 'Failed to load admin data.')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    load()
-  }, [roleFilter])
-
-  const handleToggleStatus = async (user) => {
-    setError('')
-
-    try {
-      await updateUserStatus(user.id, !user.is_active)
-      await loadUsers()
-      flashNotice(`${user.name} ${user.is_active ? 'suspended' : 'reactivated'}.`)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update user.')
-    }
+      if (tab === 'users') { const response = await getUsers({ role: role || undefined, page }); setUsers(response.data.users); setHasMore(page < response.data.pagination.total_pages) }
+      if (tab === 'orders') { const response = await getPlatformOrders({ page }); setOrders(response.data.orders); setHasMore(page * 30 < response.data.pagination.total) }
+      if (tab === 'promos') setPromos((await getPromos()).data.promos)
+    } catch (err) { setError(errorMessage(err)) }
+  }, [tab, role, page])
+  // The effect starts remote I/O; load updates state after the API response.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load() }, [load])
+  async function act(operation) {
+    setBusy(true); setError('')
+    try { await operation(); await load() } catch (err) { setError(errorMessage(err)) } finally { setBusy(false) }
   }
-
-  if (loading) return <LoadingSpinner message="Loading admin panel..." />
-
-  return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-800 mb-1">Admin Panel</h1>
-      <p className="text-gray-500 mb-6">Platform-wide overview and user management.</p>
-
-      {error && (
-        <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="bg-green-50 text-green-700 px-4 py-3 rounded-lg mb-4 text-sm">
-          {notice}
-        </div>
-      )}
-
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-          {stats.users_by_role.map(row => (
-            <div
-              key={row.role}
-              className="bg-white rounded-xl border border-gray-100 p-4 text-center"
-            >
-              <p className="text-2xl font-bold text-gray-800">{row.count}</p>
-              <p className="text-xs text-gray-400 capitalize">
-                {ROLE_LABELS[row.role] || row.role}
-              </p>
-            </div>
-          ))}
-          <div className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-            <p className="text-2xl font-bold text-gray-800">{stats.restaurant_count}</p>
-            <p className="text-xs text-gray-400">Restaurants</p>
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-xl border border-gray-100 p-5">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="font-semibold text-gray-700">Users</h2>
-          <select
-            value={roleFilter}
-            onChange={e => setRoleFilter(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white
-                       focus:outline-none focus:ring-2 focus:ring-green-500"
-          >
-            <option value="">All roles</option>
-            {Object.entries(ROLE_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead>
-              <tr className="text-gray-400 border-b border-gray-100">
-                <th className="py-2 pr-4">Name</th>
-                <th className="py-2 pr-4">Email</th>
-                <th className="py-2 pr-4">Role</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id} className="border-b border-gray-50">
-                  <td className="py-2 pr-4 text-gray-700">{u.name}</td>
-                  <td className="py-2 pr-4 text-gray-500">{u.email}</td>
-                  <td className="py-2 pr-4 text-gray-500 capitalize">
-                    {ROLE_LABELS[u.role] || u.role}
-                  </td>
-                  <td className="py-2 pr-4">
-                    <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                      u.is_active
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-600'
-                    }`}>
-                      {u.is_active ? 'Active' : 'Suspended'}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-4">
-                    {u.role !== 'admin' && (
-                      <button
-                        onClick={() => handleToggleStatus(u)}
-                        className="text-xs px-3 py-1 rounded-full font-medium
-                                   bg-gray-100 text-gray-600 hover:bg-gray-200"
-                      >
-                        {u.is_active ? 'Suspend' : 'Reactivate'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  )
+  return <main className="page-shell py-9"><div className="dashboard-heading"><p className="eyebrow mb-2">Keep the good food moving</p><h1 className="section-heading">Cravio control room 🍊</h1></div><BusinessSummary />
+    <div className="flex flex-wrap gap-3 mb-6">{['orders', 'users', 'promos', 'support'].map(value => <button key={value} className={(tab === value ? 'btn-primary' : 'btn-secondary') + ' capitalize'} onClick={() => { setTab(value); setPage(1) }}>{value}</button>)}<button className="btn-secondary ml-auto" onClick={load}>Refresh</button></div>{error && <p role="alert" className="notice-error mb-5">{error}</p>}
+    {tab === 'support' && <SupportPanel admin />}
+    {tab === 'orders' && <div className="space-y-4">{!orders.length && <p className="surface p-8 muted">No orders yet.</p>}{orders.map(order => <article key={order.id} className="surface"><button className="p-5 w-full flex justify-between text-left gap-4" onClick={() => setExpanded(expanded === order.id ? null : order.id)}><span><strong>#{order.id} · {order.restaurant_name}</strong><span className="block text-sm muted mt-2">{order.customer_name} · {order.division}</span></span><span className="text-right"><strong>{money(order.total_amount)}</strong><span className="block text-sm mt-2 capitalize">{order.status.replaceAll('_', ' ')} · {order.payment_status}</span></span></button>{expanded === order.id && <OrderReceipt id={order.id} onChanged={load} />}</article>)}</div>}
+    {tab === 'users' && <section className="surface p-5"><label className="field-label">Account role<select className="field !w-auto ml-3" value={role} onChange={event => { setRole(event.target.value); setPage(1) }}><option value="">All roles</option>{['customer', 'restaurant_owner', 'rider', 'admin'].map(value => <option key={value}>{value}</option>)}</select></label><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-3">Account</th><th className="p-3">Role</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead><tbody>{users.map(account => <tr key={account.id} className="border-b"><td className="p-3"><strong>{account.name}</strong><span className="block muted">{account.email}</span></td><td className="p-3">{account.role}</td><td className="p-3">{account.is_active ? 'Active' : 'Suspended'}</td><td className="p-3"><button disabled={busy || account.id === user.id} className="btn-secondary" onClick={() => act(() => updateUserStatus(account.id, !account.is_active))}>{account.is_active ? 'Suspend' : 'Reactivate'}</button></td></tr>)}</tbody></table></div></section>}
+    {tab === 'promos' && <div className="grid lg:grid-cols-2 gap-6"><form className="surface p-6 space-y-3" onSubmit={event => { event.preventDefault(); act(async () => { await createPromo({ ...form, code: form.code.toUpperCase(), discount_percent: Number(form.discount_percent), min_order_amount: Number(form.min_order_amount), usage_limit: Number(form.usage_limit) }); setForm(emptyPromo) }) }}><h2 className="text-xl font-bold">🏷️ Create a promo</h2>{[['code', 'Code', 'text'], ['discount_percent', 'Discount percent', 'number'], ['min_order_amount', 'Minimum food subtotal', 'number'], ['usage_limit', 'Total uses', 'number'], ['expiry_date', 'Expiry date', 'date']].map(([key, label, type]) => <label key={key} className="field-label">{label}<input required className="field mt-1" type={type} maxLength={20} value={form[key]} min={key === 'min_order_amount' ? 0 : 1} max={key === 'discount_percent' ? 100 : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })} /></label>)}<button disabled={busy} className="btn-primary">Create promo</button></form><div className="space-y-4">{promos.map(promo => <article key={promo.id} className="surface p-5"><div className="flex justify-between"><h3 className="font-bold">{promo.code} · {promo.discount_percent}%</h3><button className="text-sm text-orange-700" disabled={busy} onClick={() => act(() => togglePromo(promo.id, !promo.is_active))}>{promo.is_active ? 'Disable' : 'Enable'}</button></div><p className="text-sm muted mt-3">Minimum {money(promo.min_order_amount)} · {promo.used_count}/{promo.usage_limit} uses</p><p className="text-xs muted mt-2">Expires {String(promo.expiry_date).slice(0, 10)} · {promo.is_active ? 'Active' : 'Disabled'}</p></article>)}</div></div>}
+    {['orders', 'users'].includes(tab) && <div className="flex justify-center items-center gap-4 mt-6"><button className="btn-secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page}</span><button className="btn-secondary" disabled={!hasMore} onClick={() => setPage(page + 1)}>Next</button></div>}
+  </main>
 }
-
-export default AdminDashboardPage

@@ -1,8 +1,10 @@
 import api from '../utils/api'
+export const getRiderProfile = () => api.get('/api/rider/profile')
+export const updateRiderProfile = payload => api.patch('/api/rider/profile', payload)
 
 
-export const getAvailableDeliveries = () => {
-    return api.get('/api/rider/deliveries/available')
+export const getAvailableDeliveries = (params = {}) => {
+    return api.get('/api/rider/deliveries/available', { params })
 }
 
 

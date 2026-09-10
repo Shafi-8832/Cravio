@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import LoadingSpinner from '../components/LoadingSpinner'
+import BusinessSummary from '../components/BusinessSummary'
+import RestaurantSettings from '../components/RestaurantSettings'
+import OwnerItemEditor from '../components/OwnerItemEditor'
+import OrderReceipt from '../components/OrderReceipt'
+import { DIVISIONS } from '../utils/format'
 import {
   getMyRestaurants,
   createRestaurant,
@@ -25,6 +30,8 @@ const ORDER_STATUS_COLORS = {
 
 const OwnerDashboardPage = () => {
   const [tab, setTab] = useState('menu')
+  const [editingItem, setEditingItem] = useState(null)
+  const [expandedOrder, setExpandedOrder] = useState(null)
 
   const [restaurants, setRestaurants] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -35,7 +42,7 @@ const OwnerDashboardPage = () => {
   const [newRestaurantName, setNewRestaurantName] = useState('')
   const [creatingRestaurant, setCreatingRestaurant] = useState(false)
 
-  const [branchForm, setBranchForm] = useState({ address: '', area: '', city: '', phone: '' })
+  const [branchForm, setBranchForm] = useState({ address: '', area: '', city: '', phone: '', division: 'Dhaka', delivery_fee: 49, min_order_amount: 0, eta_min: 25, eta_max: 45 })
 
   const [menu, setMenu] = useState([])
   const [menuLoading, setMenuLoading] = useState(false)
@@ -44,7 +51,7 @@ const OwnerDashboardPage = () => {
     category_id: '',
     name: '',
     description: '',
-    price: '',
+    price: '', image_url: '',
     is_veg: false
   })
 
@@ -77,6 +84,8 @@ const OwnerDashboardPage = () => {
     }
   }, [])
 
+  // Fetch the remote dashboard on mount.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { loadRestaurants() }, [loadRestaurants])
 
   const loadMenu = useCallback(async (restaurantId) => {
@@ -95,6 +104,8 @@ const OwnerDashboardPage = () => {
   }, [])
 
   useEffect(() => {
+    // Fetch categories when the selected restaurant changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selectedId) loadMenu(selectedId)
   }, [selectedId, loadMenu])
 
@@ -112,6 +123,8 @@ const OwnerDashboardPage = () => {
   }, [orderStatusFilter])
 
   useEffect(() => {
+    // Fetch the selected remote order filter.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (tab === 'orders') loadOrders()
   }, [tab, loadOrders])
 
@@ -143,7 +156,7 @@ const OwnerDashboardPage = () => {
 
     try {
       await addBranch(selectedId, branchForm)
-      setBranchForm({ address: '', area: '', city: '', phone: '' })
+      setBranchForm({ address: '', area: '', city: '', phone: '', division: 'Dhaka', delivery_fee: 49, min_order_amount: 0, eta_min: 25, eta_max: 45 })
       await loadRestaurants()
       flashNotice('Branch added.')
     } catch (err) {
@@ -189,9 +202,10 @@ const OwnerDashboardPage = () => {
         name: itemForm.name.trim(),
         description: itemForm.description.trim() || undefined,
         price: Number(itemForm.price),
-        is_veg: itemForm.is_veg
+        is_veg: itemForm.is_veg,
+        image_url: itemForm.image_url || undefined
       })
-      setItemForm({ category_id: '', name: '', description: '', price: '', is_veg: false })
+      setItemForm({ category_id: '', name: '', description: '', price: '', image_url: '', is_veg: false })
       await loadMenu(selectedId)
       flashNotice('Menu item added.')
     } catch (err) {
@@ -239,8 +253,10 @@ const OwnerDashboardPage = () => {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-800 mb-1">Restaurant Owner Dashboard</h1>
+      <div className="dashboard-heading"><p className="eyebrow mb-2">Made with care, served with pride</p><h1 className="section-heading">Your restaurant studio 👨‍🍳</h1></div>
       <p className="text-gray-500 mb-6">Manage your restaurants, menus, and incoming orders.</p>
+      <BusinessSummary />
+      {selectedRestaurant && <RestaurantSettings key={selectedRestaurant.id} restaurant={selectedRestaurant} onSaved={loadRestaurants} />}
 
       {error && (
         <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
@@ -254,6 +270,7 @@ const OwnerDashboardPage = () => {
       )}
 
       <div className="flex gap-2 mb-6 border-b border-gray-200">
+        <button className="ml-auto btn-secondary" onClick={() => { loadRestaurants(); if (tab === 'orders') loadOrders() }}>Refresh</button>
         {['menu', 'orders'].map(t => (
           <button
             key={t}
@@ -379,6 +396,8 @@ const OwnerDashboardPage = () => {
                         onChange={e => setBranchForm({ ...branchForm, phone: e.target.value })}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                       />
+                      <label className="field-label">Division<select className="field" value={branchForm.division} onChange={e => setBranchForm({ ...branchForm, division: e.target.value })}>{DIVISIONS.map(value => <option key={value}>{value}</option>)}</select></label>
+                      <div className="grid grid-cols-2 gap-2">{[['delivery_fee', 'Delivery fee'], ['min_order_amount', 'Minimum order'], ['eta_min', 'ETA minimum'], ['eta_max', 'ETA maximum']].map(([key, label]) => <label className="text-sm" key={key}>{label}<input type="number" min={key.startsWith('eta') ? 1 : 0} required className="field mt-1" value={branchForm[key]} onChange={e => setBranchForm({ ...branchForm, [key]: Number(e.target.value) })} /></label>)}</div>
                       <button
                         type="submit"
                         className="bg-green-700 text-white px-4 py-2 rounded-lg text-sm
@@ -430,6 +449,7 @@ const OwnerDashboardPage = () => {
                                     {item.name} — ৳{Number(item.price).toFixed(2)}
                                   </span>
                                   <div className="flex items-center gap-2">
+                                    <button className="text-xs text-orange-700" onClick={() => setEditingItem(item)}>Edit</button>
                                     <button
                                       onClick={() => handleToggleItem(item.id)}
                                       className={`text-xs px-2 py-1 rounded-full ${
@@ -456,6 +476,7 @@ const OwnerDashboardPage = () => {
                     )}
 
                     <form onSubmit={handleCreateItem} className="space-y-2 border-t border-gray-100 pt-4">
+                      <label className="field-label">Menu photo URL<input className="field mt-1" maxLength={255} placeholder="https://… or /media/filename.jpg" value={itemForm.image_url} onChange={e => setItemForm({ ...itemForm, image_url: e.target.value })} /></label>
                       <select
                         required
                         value={itemForm.category_id}
@@ -552,6 +573,7 @@ const OwnerDashboardPage = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button className="btn-secondary !py-1" onClick={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}>Receipt & payment</button>
                     <span className={`text-xs px-2 py-1 rounded-full font-medium capitalize ${
                       ORDER_STATUS_COLORS[order.status] || 'bg-gray-100 text-gray-600'
                     }`}>
@@ -596,12 +618,14 @@ const OwnerDashboardPage = () => {
                       </>
                     )}
                   </div>
+                  {expandedOrder === order.id && <div className="w-full"><OrderReceipt id={order.id} onChanged={loadOrders} /></div>}
                 </div>
               ))}
             </div>
           )}
         </div>
       )}
+      {editingItem && <OwnerItemEditor item={editingItem} restaurantId={selectedId} onClose={() => setEditingItem(null)} onSaved={() => loadMenu(selectedId)} />}
     </div>
   )
 }

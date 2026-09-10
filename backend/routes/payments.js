@@ -25,7 +25,12 @@ const router = express.Router()
 
 // Loads a payment together with everything needed to authorize the caller:
 // who placed the order, and who owns the restaurant it belongs to.
-const findPaymentForOrder = async (db, orderId) => {
+const findPaymentForOrder = async (db, orderId, lock = false) => {
+  if (lock) {
+    // Same lock order as cancellation and delivery prevents races and deadlocks.
+    await db.query('SELECT id FROM orders WHERE id=$1 FOR UPDATE', [orderId])
+    await db.query('SELECT id FROM payments WHERE order_id=$1 FOR UPDATE', [orderId])
+  }
   const result = await db.query(
     `
       SELECT
@@ -156,7 +161,7 @@ router.post(
     try {
       await client.query('BEGIN')
 
-      const payment = await findPaymentForOrder(client, orderId)
+      const payment = await findPaymentForOrder(client, orderId, true)
 
       if (!payment) {
         await client.query('ROLLBACK')
@@ -172,6 +177,11 @@ router.post(
         return res.status(403).json({
           error: 'You can only pay for your own orders.'
         })
+      }
+
+      if (payment.order_status === 'cancelled') {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'This order is cancelled.', code: 'ORDER_CANCELLED' })
       }
 
       if (payment.method === 'cash_on_delivery') {
@@ -192,6 +202,16 @@ router.post(
           error: 'This payment has already been confirmed.',
           code: 'ALREADY_PAID'
         })
+      }
+
+      // References are claims to verify, never proof of payment. Serialize reuse
+      // checks across orders so the same transfer cannot settle two purchases.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [reference.toUpperCase()])
+      const duplicate = await client.query(`SELECT id FROM payments WHERE UPPER(transaction_ref)=UPPER($1)
+        AND order_id<>$2`, [reference, orderId])
+      if (duplicate.rowCount) {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'That payment reference is already submitted for another order.' })
       }
 
       const updated = await client.query(
@@ -260,7 +280,7 @@ router.patch(
     try {
       await client.query('BEGIN')
 
-      const payment = await findPaymentForOrder(client, orderId)
+      const payment = await findPaymentForOrder(client, orderId, true)
 
       if (!payment) {
         await client.query('ROLLBACK')
@@ -276,6 +296,19 @@ router.patch(
         return res.status(403).json({
           error: 'You can only manage payments for your own restaurant.'
         })
+      }
+
+      if (payment.method === 'cash_on_delivery') {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'Cash is recorded by the assigned rider on delivery.', code: 'METHOD_IS_CASH' })
+      }
+      if (payment.status === 'paid') {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'This payment is already settled. Refunds require support reconciliation.', code: 'ALREADY_PAID' })
+      }
+      if (status === 'paid' && !payment.transaction_ref) {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'A customer transaction reference is required before manual verification.' })
       }
 
       // Confirming a payment for an order nobody is going to deliver would

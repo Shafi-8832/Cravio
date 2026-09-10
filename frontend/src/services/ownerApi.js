@@ -1,4 +1,10 @@
 import api from '../utils/api'
+export const editRestaurant = (id, payload) => api.patch('/api/restaurants/' + id, payload)
+export const editMenuItem = (id, payload) => api.patch('/api/menu/items/' + id, payload)
+export const addModifierGroup = (id, payload) => api.post('/api/menu/items/' + id + '/modifier-groups', payload)
+export const addModifierOption = (id, payload) => api.post('/api/menu/modifier-groups/' + id + '/options', payload)
+export const toggleModifierOption = id => api.patch('/api/menu/modifier-options/' + id + '/toggle')
+export const deleteModifierGroup = id => api.delete('/api/menu/modifier-groups/' + id)
 
 
 export const getMyRestaurants = () => {

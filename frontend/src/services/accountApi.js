@@ -1,0 +1,10 @@
+import api from '../utils/api'
+export const getProfile = () => api.get('/api/account/profile')
+export const updateProfile = payload => api.patch('/api/account/profile', payload)
+export const getAddresses = () => api.get('/api/account/addresses')
+export const createAddress = payload => api.post('/api/account/addresses', payload)
+export const updateAddress = (id, payload) => api.patch('/api/account/addresses/' + id, payload)
+export const deleteAddress = id => api.delete('/api/account/addresses/' + id)
+export const getFavorites = () => api.get('/api/account/favorites')
+export const saveFavorite = id => api.put('/api/account/favorites/' + id)
+export const removeFavorite = id => api.delete('/api/account/favorites/' + id)

@@ -1,129 +1,41 @@
-import { useState } from 'react' // NEW: local state to track if the cart drawer is open
-import { Link, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useCart } from '../context/CartContext' // NEW: read cart item count
-import CartDrawer from './CartDrawer' // NEW: the slide-over panel component
-import Api from '../utils/api' // NEW: for logout API call
+import { useCart } from '../context/CartContext'
+import CartDrawer from './CartDrawer'
+import Icon from './Icon'
+import { errorMessage } from '../utils/format'
 
-const Navbar = () => {
-  const { user, logout } = useAuth()               // current user + logout function
-  const { itemCount } = useCart()                   // NEW: how many items are in the cart
-
-  const canUseCart = user?.role === 'customer'
-  const [isCartOpen, setIsCartOpen] = useState(false) // NEW: drawer open/closed state
-  const navigate = useNavigate()                     // lets us redirect after logout
-
-  const handleLogout = async () => {
-    await logout()            // clear auth state + localStorage
-    navigate('/login')  // send the user to the login page
+export default function Navbar() {
+  const { user, logout } = useAuth()
+  const { itemCount } = useCart()
+  const [isCartOpen, setIsCartOpen] = useState(false)
+  const [error, setError] = useState('')
+  const navigate = useNavigate()
+  const roleLinks = { restaurant_owner: ['/owner', 'Restaurant studio'], rider: ['/rider', 'Deliveries'], admin: ['/admin', 'Admin studio'] }
+  async function handleLogout() {
+    try { await logout(); navigate('/'); setError('') }
+    catch (err) { setError(errorMessage(err, 'Could not sign out. Please retry so your session can be revoked.')) }
   }
-
-  return (
-    <nav className="bg-green-700 text-white px-6 py-4 flex items-center justify-between shadow-md">
-
-      {/* Logo — clicking it always goes home */}
-      <Link to="/" className="text-2xl font-bold tracking-tight">
-        Cravio
-      </Link>
-
-      {/* Right side of the navbar */}
-      <div className="flex items-center gap-4">
-        {user ? (
-          // ---- logged-in view ----
-          <>
-            <span className="text-sm text-green-100">
-              Hello, {user.name.split(' ')[0]} {/* first name only */}
-            </span>
-            <span className="text-xs bg-green-800 px-2 py-1 rounded-full capitalize">
-              {user.role.replace('_', ' ')} {/* e.g. "restaurant owner" */}
-            </span>
-
-            {/* Role-specific navigation — each role only sees its own link */}
-            {user.role === 'customer' && (
-              <Link
-                to="/orders"
-                className="text-sm hover:text-green-200 transition-colors"
-              >
-                My Orders
-              </Link>
-            )}
-            {user.role === 'restaurant_owner' && (
-              <Link
-                to="/owner"
-                className="text-sm hover:text-green-200 transition-colors"
-              >
-                Dashboard
-              </Link>
-            )}
-            {user.role === 'rider' && (
-              <Link
-                to="/rider"
-                className="text-sm hover:text-green-200 transition-colors"
-              >
-                Deliveries
-              </Link>
-            )}
-            {user.role === 'admin' && (
-              <Link
-                to="/admin"
-                className="text-sm hover:text-green-200 transition-colors"
-              >
-                Admin Panel
-              </Link>
-            )}
-
-            {/* NEW: cart button, opens the CartDrawer */}
-            { canUseCart && ( 
-              <button
-                onClick={() => setIsCartOpen(true)} // flip drawer open
-                className="relative bg-green-800 hover:bg-green-900 transition-colors
-                          w-9 h-9 rounded-full flex items-center justify-center"
-              >
-                🛒
-                {itemCount > 0 && (
-                  // small red badge showing how many items are in the cart
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white
-                                    text-[10px] font-bold rounded-full w-5 h-5
-                                    flex items-center justify-center">
-                    {itemCount}
-                  </span>
-                )}
-              </button>)
-            }
-
-            <button
-              onClick={handleLogout}
-              className="bg-white text-green-700 px-4 py-1 rounded-lg 
-                         text-sm font-semibold hover:bg-green-50 transition-colors"
-            >
-              Logout
-            </button>
-          </>
-        ) : (
-          // ---- logged-out view ----
-          <>
-            <Link 
-              to="/login"
-              className="text-sm hover:text-green-200 transition-colors"
-            >
-              Login
-            </Link>
-            <Link 
-              to="/signup"
-              className="bg-white text-green-700 px-4 py-1 rounded-lg 
-                         text-sm font-semibold hover:bg-green-50 transition-colors"
-            >
-              Sign Up
-            </Link>
-          </>
-        )}
+  const activeClass = ({ isActive }) => 'text-sm font-semibold transition-colors hover:text-orange-600 ' + (isActive ? 'text-orange-700' : 'text-stone-600')
+  return <>
+    <header className="bg-white/95 border-b border-stone-200/60 sticky top-0 z-30 backdrop-blur-md">
+      <div className="page-shell h-20 flex items-center gap-6">
+        <Link to="/" className="brand text-[31px] flex items-center gap-2.5" aria-label="Cravio home"><span className="bg-orange-600 text-white rounded-xl w-10 h-10 flex items-center justify-center"><Icon name="bag" size={24} /></span>cravio<span className="text-orange-600 -ml-2">.</span></Link>
+        <div className="hidden lg:flex items-center gap-2 text-sm pl-6 border-l border-stone-200"><Icon name="pin" className="text-orange-600" /><div><p className="text-[10px] uppercase tracking-widest text-stone-400">Discover in</p><p className="font-semibold">Bangladesh <span className="ml-1">🇧🇩</span></p></div></div>
+        <nav aria-label="Main navigation" className="flex items-center gap-5 ml-auto">
+          <NavLink to="/" end className={({ isActive }) => 'hidden sm:block ' + activeClass({ isActive })}>Explore</NavLink>
+          {user?.role === 'customer' && <NavLink to="/orders" className={activeClass}>Orders</NavLink>}
+          {roleLinks[user?.role] && <NavLink to={roleLinks[user.role][0]} className={activeClass}>{roleLinks[user.role][1]}</NavLink>}
+          {user ? <>
+            <Link to="/account" className="icon-button" aria-label="Your account" title={user.name}><Icon name="user" size={18} /></Link>
+            <button onClick={handleLogout} className="hidden sm:flex icon-button" aria-label="Sign out" title="Sign out"><Icon name="logout" size={18} /></button>
+            {user.role === 'customer' && <button onClick={() => setIsCartOpen(true)} className="btn-primary relative !px-3 sm:!px-4" aria-label={'Open cart, ' + itemCount + ' items'}><Icon name="bag" size={19} /><span className="hidden sm:inline">Cart</span><span className="rounded-full bg-white/20 px-1.5 text-xs">{itemCount}</span></button>}
+          </> : <><Link to="/login" className="text-sm font-bold">Log in</Link><Link to="/signup" className="btn-primary !px-3 sm:!px-5">Sign up <Icon name="arrow" size={16} /></Link></>}
+        </nav>
       </div>
-
-      {/* NEW: the cart drawer lives here so it can overlay the whole app;
-          it renders nothing when isCartOpen is false */}
-      <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
-    </nav>
-  )
+      {error && <div className="notice-error rounded-none" role="alert">{error}</div>}
+    </header>
+    <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
+  </>
 }
-
-export default Navbar

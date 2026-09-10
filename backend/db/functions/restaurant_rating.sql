@@ -142,6 +142,10 @@ BEGIN
     END IF;
 
 
+    -- Serialize before computing the aggregate. Waiting only during UPDATE can
+    -- otherwise reuse an aggregate calculated before another review committed.
+    PERFORM id FROM restaurants WHERE id = ANY(v_restaurant_ids) ORDER BY id FOR UPDATE;
+
     FOREACH v_restaurant_id IN ARRAY v_restaurant_ids
     LOOP
 

@@ -1,0 +1,686 @@
+{
+  "schema_version": 1,
+  "notice": "All restaurants, menus, prices, delivery areas and estimates in this file are fictional demonstration data. Photos are illustrative stock photography, not restaurant-owned photographs.",
+  "restaurants": [
+    {
+      "catalog_slug": "demo-dhaka-dum-house",
+      "name": "Dhaka Dum House",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Dhaka for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Biryani & Bangladeshi",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/biryani.jpg",
+      "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+      "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Dhanmondi, Dhaka (not a real address)",
+          "area": "Dhanmondi",
+          "city": "Dhaka",
+          "division": "Dhaka",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 49,
+          "min_order_amount": 150,
+          "eta_min": 25,
+          "eta_max": 40
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Chicken Dum Biryani",
+              "description": "Aromatic rice, tender chicken, fried onions and a touch of mint.",
+              "price": 320,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/biryani.jpg",
+              "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+              "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Creamy Chicken Curry",
+              "description": "Tender chicken in a warmly spiced tomato and cream sauce.",
+              "price": 310,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/curry.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Rainbow Salad Bowl",
+              "description": "A colourful bowl of greens, cucumber, sweetcorn and a grilled topping.",
+              "price": 250,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/salad.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-port-city-noodle-club",
+      "name": "Port City Noodle Club",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Chattogram for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Asian & Noodles",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/noodles.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, GEC Circle, Chattogram (not a real address)",
+          "area": "GEC Circle",
+          "city": "Chattogram",
+          "division": "Chattogram",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 39,
+          "min_order_amount": 150,
+          "eta_min": 25,
+          "eta_max": 45
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Prawn & Egg Noodle Soup",
+              "description": "Noodles, prawns, soft egg and green vegetables in a warming broth.",
+              "price": 340,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/noodles.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Creamy Chicken Curry",
+              "description": "Tender chicken in a warmly spiced tomato and cream sauce.",
+              "price": 310,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/curry.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Cheese & Herb Fries",
+              "description": "Golden fries finished with grated cheese and green herbs.",
+              "price": 160,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/fries.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-sylhet-tea-table",
+      "name": "Sylhet Tea Table",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Sylhet for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Cafe & Bangladeshi",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/tea.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Zindabazar, Sylhet (not a real address)",
+          "area": "Zindabazar",
+          "city": "Sylhet",
+          "division": "Sylhet",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 39,
+          "min_order_amount": 150,
+          "eta_min": 20,
+          "eta_max": 35
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Chicken Dum Biryani",
+              "description": "Aromatic rice, tender chicken, fried onions and a touch of mint.",
+              "price": 320,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/biryani.jpg",
+              "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+              "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Creamy Chicken Curry",
+              "description": "Tender chicken in a warmly spiced tomato and cream sauce.",
+              "price": 310,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/curry.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Cheese & Herb Fries",
+              "description": "Golden fries finished with grated cheese and green herbs.",
+              "price": 160,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/fries.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-rajshahi-slice-studio",
+      "name": "Rajshahi Slice Studio",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Rajshahi for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Pizza & Italian",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/pizza.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Shaheb Bazar, Rajshahi (not a real address)",
+          "area": "Shaheb Bazar",
+          "city": "Rajshahi",
+          "division": "Rajshahi",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 39,
+          "min_order_amount": 150,
+          "eta_min": 25,
+          "eta_max": 40
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Classic Cheese Pizza",
+              "description": "Golden baked cheese, a tomato base and a crisp crust. Regular 9-inch.",
+              "price": 480,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/pizza.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Double Beef Cheeseburger",
+              "description": "Two beef patties, cheese, lettuce, tomato and house sauce.",
+              "price": 360,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/burger.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Cheese & Herb Fries",
+              "description": "Golden fries finished with grated cheese and green herbs.",
+              "price": 160,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/fries.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-khulna-curry-corner",
+      "name": "Khulna Curry Corner",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Khulna for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Curry & Bangladeshi",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/curry.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Sonadanga, Khulna (not a real address)",
+          "area": "Sonadanga",
+          "city": "Khulna",
+          "division": "Khulna",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 39,
+          "min_order_amount": 150,
+          "eta_min": 25,
+          "eta_max": 45
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Creamy Chicken Curry",
+              "description": "Tender chicken in a warmly spiced tomato and cream sauce.",
+              "price": 310,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/curry.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Chicken Dum Biryani",
+              "description": "Aromatic rice, tender chicken, fried onions and a touch of mint.",
+              "price": 320,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/biryani.jpg",
+              "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+              "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Rainbow Salad Bowl",
+              "description": "A colourful bowl of greens, cucumber, sweetcorn and a grilled topping.",
+              "price": 250,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/salad.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-barishal-burger-house",
+      "name": "Barishal Burger House",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Barishal for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Burgers & Fast Food",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/burger.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Sadar Road, Barishal (not a real address)",
+          "area": "Sadar Road",
+          "city": "Barishal",
+          "division": "Barishal",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 29,
+          "min_order_amount": 150,
+          "eta_min": 20,
+          "eta_max": 35
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Double Beef Cheeseburger",
+              "description": "Two beef patties, cheese, lettuce, tomato and house sauce.",
+              "price": 360,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/burger.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Classic Cheese Pizza",
+              "description": "Golden baked cheese, a tomato base and a crisp crust. Regular 9-inch.",
+              "price": 480,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/pizza.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Cheese & Herb Fries",
+              "description": "Golden fries finished with grated cheese and green herbs.",
+              "price": 160,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/fries.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-rangpur-rice-kitchen",
+      "name": "Rangpur Rice Kitchen",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Rangpur for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Biryani & Bangladeshi",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/biryani.jpg",
+      "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+      "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Jahaj Company More, Rangpur (not a real address)",
+          "area": "Jahaj Company More",
+          "city": "Rangpur",
+          "division": "Rangpur",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 29,
+          "min_order_amount": 150,
+          "eta_min": 25,
+          "eta_max": 45
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Chicken Dum Biryani",
+              "description": "Aromatic rice, tender chicken, fried onions and a touch of mint.",
+              "price": 320,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/biryani.jpg",
+              "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+              "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Creamy Chicken Curry",
+              "description": "Tender chicken in a warmly spiced tomato and cream sauce.",
+              "price": 310,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/curry.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Cheese & Herb Fries",
+              "description": "Golden fries finished with grated cheese and green herbs.",
+              "price": 160,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/fries.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "catalog_slug": "demo-mymensingh-garden-table",
+      "name": "Mymensingh Garden Table",
+      "owner_email": "nabila@example.com",
+      "description": "A fictional Cravio kitchen in Mymensingh for trying the complete ordering experience. Sample prices and illustrative food photos.",
+      "cuisine": "Bowls & Cafe",
+      "is_demo": true,
+      "ordering_enabled": true,
+      "image_url": "/media/salad.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true,
+      "branches": [
+        {
+          "address": "Demo pickup point, Ganginarpar, Mymensingh (not a real address)",
+          "area": "Ganginarpar",
+          "city": "Mymensingh",
+          "division": "Mymensingh",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": true,
+          "delivery_fee": 29,
+          "min_order_amount": 150,
+          "eta_min": 20,
+          "eta_max": 40
+        }
+      ],
+      "categories": [
+        {
+          "name": "House favourites",
+          "items": [
+            {
+              "name": "Rainbow Salad Bowl",
+              "description": "A colourful bowl of greens, cucumber, sweetcorn and a grilled topping.",
+              "price": 250,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/salad.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Prawn & Egg Noodle Soup",
+              "description": "Noodles, prawns, soft egg and green vegetables in a warming broth.",
+              "price": 340,
+              "is_veg": false,
+              "is_available": true,
+              "image_url": "/media/noodles.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            },
+            {
+              "name": "Classic Cheese Pizza",
+              "description": "Golden baked cheese, a tomato base and a crisp crust. Regular 9-inch.",
+              "price": 480,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/pizza.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        },
+        {
+          "name": "Sides & sips",
+          "items": [
+            {
+              "name": "Milk Tea & Cookies",
+              "description": "A comforting cup of milk tea with two cookies.",
+              "price": 90,
+              "is_veg": true,
+              "is_available": true,
+              "image_url": "/media/tea.jpg",
+              "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+              "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+              "image_is_illustrative": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

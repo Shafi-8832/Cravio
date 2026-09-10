@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "notice": "Replace example values with owner-supplied data, record source and photograph credits, create the owner account, then import. Keep ordering_enabled false until onboarding is complete.",
+  "restaurants": [
+    {
+      "catalog_slug": "replace-with-your-restaurant-slug",
+      "name": "Replace with restaurant name",
+      "owner_email": null,
+      "description": "Replace with owner-approved description.",
+      "cuisine": "Bangladeshi",
+      "is_demo": false,
+      "ordering_enabled": false,
+      "source_url": "https://example.com/restaurant-official-page",
+      "verified_at": null,
+      "image_url": null,
+      "image_credit": null,
+      "image_source_url": null,
+      "image_is_illustrative": false,
+      "branches": [
+        {
+          "address": "Replace with verified pickup address",
+          "area": "Replace with area",
+          "city": "Dhaka",
+          "division": "Dhaka",
+          "phone": null,
+          "latitude": null,
+          "longitude": null,
+          "is_open": false,
+          "delivery_fee": 49,
+          "min_order_amount": 0,
+          "eta_min": 25,
+          "eta_max": 45
+        }
+      ],
+      "categories": [
+        {
+          "name": "Main dishes",
+          "items": [
+            {
+              "name": "Replace with actual dish name",
+              "description": "Replace with confirmed ingredients, portion and allergen information.",
+              "price": 100,
+              "is_veg": false,
+              "is_available": false,
+              "image_url": null,
+              "image_credit": null,
+              "image_source_url": null,
+              "image_is_illustrative": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

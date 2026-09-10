@@ -55,7 +55,7 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
         name,
         description,
         price,
-        image_url,
+        image_url, image_credit, image_source_url, image_is_illustrative,
         is_available,
         is_veg,
         quality_flag,
@@ -201,7 +201,7 @@ router.post( // every HTTP call needs to be verified.
       })
     }
 
-    if (!name || !name.trim()) {
+    if (typeof name !== 'string' || !name.trim() || name.length > 100) {
       return res.status(400).json({
         error: 'Category name is required.'
       })
@@ -287,7 +287,7 @@ router.post(
       })
     }
 
-    if (!name || !name.trim()) {
+    if (typeof name !== 'string' || !name.trim() || name.length > 100) {
       return res.status(400).json({
         error: 'Menu item name is required.'
       })
@@ -296,11 +296,17 @@ router.post(
     if (
       price === undefined ||
       price === null ||
-      Number(price) < 0
+      !Number.isFinite(Number(price)) || Number(price) < 0 || Number(price) > 1000000
     ) {
       return res.status(400).json({
         error: 'A valid menu item price is required.'
       })
+    }
+
+    if ((description !== undefined && (typeof description !== 'string' || description.length > 2000)) ||
+        (is_veg !== undefined && typeof is_veg !== 'boolean') ||
+        (image_url !== undefined && (typeof image_url !== 'string' || image_url.length > 255 || (image_url && !/^https:\/\/[^\s]+$|^\/media\/[\w-]+\.(jpg|jpeg|png|webp)$/.test(image_url))))) {
+      return res.status(400).json({ error: 'Invalid description, photo URL or vegetarian flag.' })
     }
 
     try {
@@ -410,12 +416,18 @@ router.patch(
 
     if (
       price !== undefined &&
-      price !== null &&
-      Number(price) < 0
+      (!Number.isFinite(Number(price)) || Number(price) < 0 || Number(price) > 1000000)
     ) {
       return res.status(400).json({
         error: 'Price cannot be negative.'
       })
+    }
+
+    if ((name !== undefined && (typeof name !== 'string' || !name.trim() || name.length > 100)) ||
+        (is_veg !== undefined && typeof is_veg !== 'boolean') ||
+        (description !== undefined && (typeof description !== 'string' || description.length > 2000)) ||
+        (image_url !== undefined && (typeof image_url !== 'string' || image_url.length > 255 || (image_url && !/^https?:\/\/|^\/media\//.test(image_url))))) {
+      return res.status(400).json({ error: 'Invalid item name, description, image URL or vegetarian flag.' })
     }
 
     try { // ? menu_category + restaurant + menu_items --> 3 relationships or trinary relationship? which is better?

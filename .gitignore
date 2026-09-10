@@ -7,3 +7,6 @@ node_modules/
 
 # macOS finder metadata
 .DS_Store
+frontend/dist/
+deliverables/
+.prompt.txt

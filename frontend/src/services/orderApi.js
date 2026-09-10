@@ -1,4 +1,8 @@
 import api from '../utils/api'
+export const cancelOrder = id => api.patch('/api/orders/' + id + '/cancel')
+export const reviewOrder = (id, payload) => api.post('/api/reviews/orders/' + id, payload)
+export const submitPaymentReference = (id, transaction_ref) => api.post('/api/payments/' + id + '/reference', { transaction_ref })
+export const verifyPayment = id => api.patch('/api/payments/' + id + '/status', { status: 'paid' })
 
 
 export const placeOrder = (payload) => {

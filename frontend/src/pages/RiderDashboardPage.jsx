@@ -1,216 +1,44 @@
-import { useState, useEffect, useCallback } from 'react'
-import LoadingSpinner from '../components/LoadingSpinner'
-import {
-  getAvailableDeliveries,
-  getMyDeliveries,
-  acceptDelivery,
-  updateDeliveryStatus
-} from '../services/riderApi'
-
-const RiderDashboardPage = () => {
-  const [tab, setTab] = useState('available')
-
+import { useCallback, useEffect, useState } from 'react'
+import { getAvailableDeliveries, getMyDeliveries, acceptDelivery, updateDeliveryStatus, getRiderProfile, updateRiderProfile } from '../services/riderApi'
+import BusinessSummary from '../components/BusinessSummary'
+import { DIVISIONS, money, errorMessage } from '../utils/format'
+export default function RiderDashboardPage() {
+  const [profile, setProfile] = useState(null)
   const [available, setAvailable] = useState([])
   const [mine, setMine] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('available')
+  const [division, setDivision] = useState('')
   const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-
-  const flashNotice = (message) => {
-    setNotice(message)
-    setTimeout(() => setNotice(''), 3000)
+  const [busy, setBusy] = useState(false)
+  const [version, setVersion] = useState(0)
+  const load = useCallback(async () => {
+    try { const [p, a, m] = await Promise.all([getRiderProfile(), getAvailableDeliveries({ division }), getMyDeliveries()]); setProfile(p.data.profile); setAvailable(a.data.deliveries); setMine(m.data.deliveries) }
+    catch (err) { setError(errorMessage(err)) }
+  }, [division])
+  // The effect starts remote I/O; load updates state after the API response.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); const timer = setInterval(load, 15000); return () => clearInterval(timer) }, [load])
+  async function act(operation) {
+    setBusy(true); setError('')
+    try { await operation(); await load(); setVersion(value => value + 1) }
+    catch (err) { setError(errorMessage(err)) } finally { setBusy(false) }
   }
-
-  const loadAvailable = useCallback(async () => {
-    try {
-      const res = await getAvailableDeliveries()
-      setAvailable(res.data.deliveries)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load available deliveries.')
-    }
-  }, [])
-
-  const loadMine = useCallback(async () => {
-    try {
-      const res = await getMyDeliveries()
-      setMine(res.data.deliveries)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load your deliveries.')
-    }
-  }, [])
-
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true)
-      await Promise.all([loadAvailable(), loadMine()])
-      setLoading(false)
-    }
-
-    load()
-  }, [loadAvailable, loadMine])
-
-  const handleAccept = async (orderId) => {
-    setError('')
-
-    try {
-      await acceptDelivery(orderId)
-      await Promise.all([loadAvailable(), loadMine()])
-      flashNotice('Delivery accepted.')
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to accept delivery.')
-    }
-  }
-
-  const handleStatusUpdate = async (orderId, status) => {
-    setError('')
-
-    try {
-      await updateDeliveryStatus(orderId, status)
-      await loadMine()
-      flashNotice('Delivery updated.')
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update delivery.')
-    }
-  }
-
-  if (loading) return <LoadingSpinner message="Loading deliveries..." />
-
-  const activeDeliveries = mine.filter(d => d.delivery_status !== 'delivered')
-  const pastDeliveries = mine.filter(d => d.delivery_status === 'delivered')
-
-  return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-gray-800 mb-1">Rider Dashboard</h1>
-      <p className="text-gray-500 mb-6">Accept nearby deliveries and update their status.</p>
-
-      {error && (
-        <div className="bg-red-50 text-red-600 px-4 py-3 rounded-lg mb-4 text-sm">
-          {error}
-        </div>
-      )}
-      {notice && (
-        <div className="bg-green-50 text-green-700 px-4 py-3 rounded-lg mb-4 text-sm">
-          {notice}
-        </div>
-      )}
-
-      <div className="flex gap-2 mb-6 border-b border-gray-200">
-        {['available', 'active', 'history'].map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-semibold capitalize border-b-2 -mb-px transition-colors ${
-              tab === t
-                ? 'border-green-700 text-green-700'
-                : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'available' && (
-        available.length === 0 ? (
-          <p className="text-gray-400">No deliveries ready for pickup right now.</p>
-        ) : (
-          <div className="space-y-3">
-            {available.map(d => (
-              <div
-                key={d.order_id}
-                className="bg-white rounded-xl border border-gray-100 p-4
-                           flex items-center justify-between flex-wrap gap-3"
-              >
-                <div>
-                  <p className="font-semibold text-gray-800">{d.restaurant_name}</p>
-                  <p className="text-sm text-gray-400">
-                    {d.branch_area}, {d.branch_city} → {d.delivery_address}
-                  </p>
-                  <p className="text-sm text-gray-500 mt-1">
-                    ৳{Number(d.total_amount).toFixed(2)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => handleAccept(d.order_id)}
-                  className="bg-green-700 text-white px-4 py-2 rounded-lg text-sm
-                             font-semibold hover:bg-green-800"
-                >
-                  Accept
-                </button>
-              </div>
-            ))}
-          </div>
-        )
-      )}
-
-      {tab === 'active' && (
-        activeDeliveries.length === 0 ? (
-          <p className="text-gray-400">No active deliveries.</p>
-        ) : (
-          <div className="space-y-3">
-            {activeDeliveries.map(d => (
-              <div
-                key={d.delivery_id}
-                className="bg-white rounded-xl border border-gray-100 p-4
-                           flex items-center justify-between flex-wrap gap-3"
-              >
-                <div>
-                  <p className="font-semibold text-gray-800">{d.restaurant_name}</p>
-                  <p className="text-sm text-gray-400">
-                    {d.branch_area}, {d.branch_city} → {d.delivery_address}
-                  </p>
-                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1
-                                    rounded-full font-medium capitalize mt-1 inline-block">
-                    {d.delivery_status.replace(/_/g, ' ')}
-                  </span>
-                </div>
-                <div className="flex gap-2">
-                  {d.delivery_status === 'assigned' && (
-                    <button
-                      onClick={() => handleStatusUpdate(d.order_id, 'picked_up')}
-                      className="bg-green-700 text-white px-3 py-1 rounded-full text-xs
-                                 font-semibold hover:bg-green-800"
-                    >
-                      Mark picked up
-                    </button>
-                  )}
-                  {d.delivery_status === 'picked_up' && (
-                    <button
-                      onClick={() => handleStatusUpdate(d.order_id, 'delivered')}
-                      className="bg-green-700 text-white px-3 py-1 rounded-full text-xs
-                                 font-semibold hover:bg-green-800"
-                    >
-                      Mark delivered
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      )}
-
-      {tab === 'history' && (
-        pastDeliveries.length === 0 ? (
-          <p className="text-gray-400">No completed deliveries yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {pastDeliveries.map(d => (
-              <div
-                key={d.delivery_id}
-                className="bg-white rounded-xl border border-gray-100 p-4"
-              >
-                <p className="font-semibold text-gray-800">{d.restaurant_name}</p>
-                <p className="text-sm text-gray-400">
-                  Delivered {d.delivery_time ? new Date(d.delivery_time).toLocaleString() : ''}
-                </p>
-              </div>
-            ))}
-          </div>
-        )
-      )}
-    </div>
-  )
+  const shown = tab === 'available' ? available : mine.filter(item => (item.delivery_status === 'delivered') === (tab === 'history'))
+  return <main className="page-shell py-9"><div className="dashboard-heading flex flex-wrap justify-between gap-5"><div><p className="eyebrow mb-2">Every delivery makes someone’s day</p><h1 className="section-heading">Let’s get moving 🚴</h1></div><div className="flex items-center gap-3"><span className="pill bg-white capitalize">{profile?.status || 'Loading…'}</span><button className="btn-primary" disabled={busy || !profile || profile.status === 'busy'} onClick={() => act(() => updateRiderProfile({ status: profile.status === 'online' ? 'offline' : 'online' }))}>{profile?.status === 'online' ? 'Go offline' : 'Go online'}</button></div></div>
+    <BusinessSummary key={version} rider />
+    {error && <p className="notice-error mb-5" role="alert">{error}</p>}
+    <div className="flex flex-wrap gap-3 items-center mb-5">{['available', 'active', 'history'].map(value => <button key={value} onClick={() => setTab(value)} className={tab === value ? 'btn-primary capitalize' : 'btn-secondary capitalize'}>{value}</button>)}<select aria-label="Pickup division" className="field !w-auto ml-auto" value={division} onChange={event => setDivision(event.target.value)}><option value="">All pickup divisions</option>{DIVISIONS.map(value => <option key={value}>{value}</option>)}</select><button className="btn-secondary" onClick={load}>Refresh</button></div>
+    {profile && <label className="text-sm flex items-center gap-3 mb-5">Your vehicle<select disabled={busy || profile.status === 'busy'} className="field !w-auto" value={profile.vehicle_type || 'bicycle'} onChange={event => act(() => updateRiderProfile({ vehicle_type: event.target.value }))}>{['bicycle', 'motorcycle', 'car'].map(value => <option key={value}>{value}</option>)}</select></label>}
+    {shown.length === 0 ? <div className="surface p-12 text-center"><p className="text-5xl mb-4">🛵</p><p className="font-bold">No deliveries in this view right now.</p>
+      {/* A blank list here is almost never a fault: a job only becomes
+          claimable once the restaurant has accepted the order and started
+          cooking. Saying so beats leaving a rider staring at an empty page
+          wondering whether the app is broken. */}
+      {tab === 'available' && <div className="text-sm muted mt-4 max-w-md mx-auto space-y-2">
+        <p>A new order is not a job yet. It becomes one only after the restaurant confirms it and marks it <strong>preparing</strong>.</p>
+        <p>So: the customer orders → the restaurant owner accepts and starts cooking → the order appears here for any online rider to claim.</p>
+        {profile?.status !== 'online' && <p className="text-orange-700 font-semibold">You are {profile?.status || 'not loaded'} — go online before you can accept a delivery.</p>}
+        {division && <p>You are only seeing pickups in {division}. Choose “All pickup divisions” to widen the search.</p>}
+      </div>}</div> : <div className="grid md:grid-cols-2 gap-5">{shown.map(job => <article key={job.order_id} className="surface p-6"><p className="eyebrow mb-2">Order #{job.order_id}</p><h2 className="text-xl font-extrabold">{job.restaurant_name}</h2><p className="text-sm mt-3"><strong>Pickup:</strong> {job.branch_address || [job.branch_area, job.branch_city].join(', ')}</p>{job.delivery_address && <p className="text-sm mt-2"><strong>Deliver to:</strong> {job.delivery_address}</p>}{job.customer_name && <p className="text-sm mt-2">{job.customer_name} {job.customer_phone && <a className="text-orange-700 underline" href={'tel:' + job.customer_phone}>{job.customer_phone}</a>}</p>}<p className="text-sm mt-4">Order value {money(job.total_amount)} · delivery fee {money(job.delivery_fee)}</p>{job.payment_method === 'cash_on_delivery' && <p className="font-bold text-orange-700 mt-2">Cash to collect: {money(job.total_amount)}</p>}{tab === 'available' ? <button disabled={busy || profile?.status !== 'online'} className="btn-primary mt-5" onClick={() => act(async () => { await acceptDelivery(job.order_id); setTab('active') })}>🛍️ Accept delivery</button> : job.delivery_status === 'assigned' ? <button disabled={busy} className="btn-primary mt-5" onClick={() => act(() => updateDeliveryStatus(job.order_id, 'picked_up'))}>🍱 Confirm pickup</button> : job.delivery_status === 'picked_up' ? <button disabled={busy} className="btn-primary mt-5" onClick={() => act(() => updateDeliveryStatus(job.order_id, 'delivered'))}>✓ Delivered{job.payment_method === 'cash_on_delivery' ? ' & cash collected' : ''}</button> : <p className="pill bg-green-50 mt-4">Delivered · {new Date(job.delivery_time).toLocaleString()}</p>}</article>)}</div>}
+  </main>
 }
-
-export default RiderDashboardPage

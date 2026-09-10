@@ -1,4 +1,20 @@
 {
+  "name": "cravio",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "db:migrate": "node backend/scripts/migrate.js",
+    "db:doctor": "node backend/scripts/doctor.js",
+    "seed:admin": "npm --prefix backend run seed:admin",
+    "seed:demo": "npm --prefix backend run seed:bangladesh",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "test:backend": "node scripts/test-backend.js",
+    "package:handoff": "python3 scripts/package-handoff.py",
+    "seed:real": "npm --prefix backend run seed:real"
+  },
   "dependencies": {
     "uuid": "^14.0.2"
   }

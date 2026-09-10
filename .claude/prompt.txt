@@ -1,0 +1,18 @@
+make different signup and login pages for customer, rider and restaurant owner-->>follow real world apps, make the login,signup page aesthetic and use proper images and texts(you may use google for pictures)
+and after login as a customer, decorate the homepage as :
+
+pictures of different foods will be shown(slide show type),
+kacchi vai still not showing his logo(coming soon is shown)-->fix it with kacchi vai food picture
+
+add some more restaurants:(google to have the logo and pcitures of the foods)-->these are real restaurants
+1. Sultan's Dine : sultandine@gmail.com Pass-BrandOwner123
+
+2.Khana's : khanas@gmail.com Pass-BrandOwner123
+
+3.Domino's Pizza : domino@gmail.com Pass-BrandOwner123
+
+4.Takeout : take@gmail.com Pass-BrandOwner123
+
+5.Fry Bucket : frybucket@gmail.com Pass-BrandOwner123
+
+Make all the restaurants available for all 8 divisions->for Dhaka add 3-4 seperate branches,other divisions only one branch is enough

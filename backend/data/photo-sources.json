@@ -1,0 +1,71 @@
+{
+  "downloaded_at": "2026-09-09",
+  "license_url": "https://unsplash.com/license",
+  "notice": "Photographs illustrate food categories only. None represents a verified restaurant or its actual menu.",
+  "photos": [
+    {
+      "file": "images/burger.jpg",
+      "download_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/burger.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/pizza.jpg",
+      "download_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/pizza.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1513104890138-7c749659a591",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/biryani.jpg",
+      "download_url": "https://images.unsplash.com/photo-1631515243349-e0cb75fb8d3a?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/biryani.jpg",
+      "image_source_url": "https://unsplash.com/photos/a-white-bowl-filled-with-rice-and-meat-ysmeQt1dzcw",
+      "image_credit": "Mario Raj / Unsplash \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/salad.jpg",
+      "download_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/salad.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/noodles.jpg",
+      "download_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/noodles.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1569718212165-3a8278d5f624",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/curry.jpg",
+      "download_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/curry.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/tea.jpg",
+      "download_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/tea.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1544787219-7f47ccb76574",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/fries.jpg",
+      "download_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877?auto=format&fit=crop&w=1000&q=85",
+      "image_url": "/media/fries.jpg",
+      "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
+      "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
+      "image_is_illustrative": true
+    }
+  ]
+}

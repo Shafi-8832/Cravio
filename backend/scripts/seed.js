@@ -1,6 +1,6 @@
 // ============================================================
 // SEED SAMPLE DATA
-// Run after db/schema.sql and db/functions/place_order.sql:
+// Run after npm run db:setup (requires migration 003_marketplace):
 //   npm run seed
 //
 // Inserts a realistic slice of the platform: test accounts for every
@@ -16,8 +16,8 @@
 // safe against two copies racing each other.
 //
 // Existing rows are never modified. If you change a price below and
-// re-run, the already-seeded row keeps its old price — drop the row (or
-// re-apply the schema) if you want the new value.
+// re-run, the already-seeded row keeps its old price. Update existing
+// menus through the owner dashboard; never reset a populated database.
 // ============================================================
 
 require('dotenv').config()
@@ -26,7 +26,15 @@ const pool = require('./../db/pool')
 
 // Same password for every seeded account. 8+ chars, so it satisfies the
 // same validation the real /api/auth/signup route applies.
-const TEST_PASSWORD = 'password123'
+const TEST_PASSWORD = process.env.DEMO_PASSWORD || ''
+
+if (process.env.NODE_ENV === 'production' || process.env.ALLOW_DEMO_SEED !== 'true') {
+  console.error('Set ALLOW_DEMO_SEED=true for local development. Demo accounts must not be seeded into production.')
+  pool.end().finally(() => { process.exitCode = 1 })
+} else if (TEST_PASSWORD.length < 8 || Buffer.byteLength(TEST_PASSWORD, 'utf8') > 72) {
+  console.error('DEMO_PASSWORD must be 8+ characters and at most 72 UTF-8 bytes.')
+  pool.end().finally(() => { process.exitCode = 1 })
+}
 
 // ============================================================
 // DATA
@@ -358,8 +366,8 @@ const ensureRestaurant = async (client, ownerId, name) => {
 
   const inserted = await client.query(
     `
-      INSERT INTO restaurants (owner_id, name)
-      VALUES ($1, $2)
+      INSERT INTO restaurants (owner_id, name, is_demo, image_is_illustrative)
+      VALUES ($1, $2, true, true)
       RETURNING id
     `,
     [ownerId, name]
@@ -566,6 +574,7 @@ const run = async () => {
 
   try {
     await client.query('BEGIN')
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('cravio-catalog-import'))")
 
     // ---- Users -------------------------------------------------
     // Hash once per run rather than per user — bcrypt is deliberately
@@ -592,7 +601,7 @@ const run = async () => {
     }
 
     // ---- Restaurants, branches, menus --------------------------
-    for (const restaurant of RESTAURANTS) {
+    for (const restaurant of (process.env.SEED_ACCOUNTS_ONLY === 'true' ? [] : RESTAURANTS)) {
       const ownerId = userIdByEmail.get(restaurant.owner)
 
       if (!ownerId) {
@@ -679,9 +688,9 @@ const run = async () => {
       console.log(`\n${total} rows inserted.`)
     }
 
-    console.log(`\nEvery seeded account uses the password: ${TEST_PASSWORD}`)
+    console.log('\nNew demo accounts use the DEMO_PASSWORD you configured. Existing passwords are unchanged.')
     console.log('  customer          ayesha@example.com')
-    console.log('  restaurant_owner  nabila@example.com  (owns Chuli Kitchen + Green Bowl)')
+    console.log('  restaurant_owner  nabila@example.com  (sample restaurant owner)')
     console.log('  rider             jahangir@example.com')
     console.log('\nAdmin is seeded separately: npm run seed:admin')
 
@@ -696,4 +705,4 @@ const run = async () => {
   }
 }
 
-run()
+if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEMO_SEED === 'true' && TEST_PASSWORD.length >= 8 && Buffer.byteLength(TEST_PASSWORD, 'utf8') <= 72) run()

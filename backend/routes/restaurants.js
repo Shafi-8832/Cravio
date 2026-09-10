@@ -14,57 +14,44 @@ const router = express.Router()
 // ============================================================
 router.get('/', async (req, res) => {
   try {
-    const { area, city } = req.query
-
-    // 1. Base query (no WHERE clause yet)
-    // The rating is read straight off the restaurants row. It used to be
-    // recomputed here with two correlated subqueries per restaurant, each
-    // walking restaurant_reviews -> orders -> restaurant_branches — on a
-    // listing page that already fans out over branches. The columns are kept
-    // correct by trg_sync_restaurant_rating (db/functions/restaurant_rating.sql),
-    // so reading them is not a shortcut that can go stale.
-    //
-    // Aliased to the names the API already returned, so clients see no change.
-    let queryText = `
-      SELECT
-        r.id,
-        r.name,
-        r.created_at,
-        u.name AS owner_name,
-        COUNT(rb.id) AS branch_count,
-        r.avg_rating AS average_rating,
-        r.review_count
-      FROM restaurants r
-      JOIN users u ON r.owner_id = u.id
-      LEFT JOIN restaurant_branches rb ON r.id = rb.restaurant_id
-    `
-    
-    const conditions = []
-    const values = []
-
-    // 2. Dynamically add conditions if the user provided them
-    if (area) {
-      values.push(`%${area}%`)
-      conditions.push(`rb.area ILIKE $${values.length}`) // $1
+    const { area = '', city = '', division = '', search = '', cuisine = '' } = req.query
+    if ([area, city, division, search, cuisine].some(value => typeof value !== 'string' || value.length > 100)) {
+      return res.status(400).json({ error: 'Search filters must be text up to 100 characters.' })
     }
-
-    if (city) {
-      values.push(`%${city}%`)
-      conditions.push(`rb.city ILIKE $${values.length}`) // $2 (or $1 if no area)
+    const limit = req.query.limit === undefined ? 60 : Number(req.query.limit)
+    const page = req.query.page === undefined ? 1 : Number(req.query.page)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(page) || page < 1) {
+      return res.status(400).json({ error: 'Use a positive page and limit between 1 and 100.' })
     }
+    const sort = req.query.sort || 'recommended'
+    if (!['recommended','rating','name'].includes(sort) || (req.query.open_only !== undefined && !['true','false'].includes(req.query.open_only))) return res.status(400).json({error:'Invalid sort or open filter.'})
+    const orderBy = sort === 'rating' ? 'r.avg_rating DESC NULLS LAST, r.name, r.id' : sort === 'name' ? 'r.name,r.id' : 'r.ordering_enabled DESC,r.name,r.id'
+    const result = await pool.query(`
+      SELECT r.*, r.avg_rating AS average_rating, u.name AS owner_name,
+        COUNT(rb.id)::int AS branch_count,
+        COALESCE(json_agg(json_build_object(
+          'id',rb.id,'area',rb.area,'city',rb.city,'division',rb.division,
+          'is_open',rb.is_open,'delivery_fee',rb.delivery_fee,'min_order_amount',rb.min_order_amount,
+          'eta_min',rb.eta_min,'eta_max',rb.eta_max
+        ) ORDER BY rb.id) FILTER (WHERE rb.id IS NOT NULL), '[]') AS branches,
+        MIN(rb.delivery_fee) AS delivery_fee, MIN(rb.eta_min) AS eta_min, MAX(rb.eta_max) AS eta_max,
+        COUNT(*) OVER()::int AS total_count
+      FROM restaurants r LEFT JOIN users u ON u.id=r.owner_id
+      LEFT JOIN restaurant_branches rb ON rb.restaurant_id=r.id
+      WHERE ($1::text='' OR rb.area ILIKE '%' || $1 || '%')
+        AND ($2::text='' OR rb.city ILIKE '%' || $2 || '%')
+        AND ($3::text='' OR rb.division=$3)
+        AND ($4::text='' OR r.name ILIKE '%' || $4 || '%' OR r.cuisine ILIKE '%' || $4 || '%'
+          OR rb.area ILIKE '%' || $4 || '%' OR rb.city ILIKE '%' || $4 || '%'
+          OR EXISTS (SELECT 1 FROM menu_items mi WHERE mi.restaurant_id=r.id AND mi.name ILIKE '%' || $4 || '%'))
+        AND ($5::text='' OR r.cuisine ILIKE '%' || $5 || '%')
+      AND ($8::boolean=false OR (r.ordering_enabled=true AND rb.is_open=true))
+      GROUP BY r.id,u.name ORDER BY ${orderBy} LIMIT $6 OFFSET $7
+    `, [area, city, division, search, cuisine, limit, (page - 1) * limit, req.query.open_only === 'true'])
 
-    // 3. Glue the WHERE clause to the base query if needed
-    if (conditions.length > 0) {
-      queryText += ` WHERE ` + conditions.join(' AND ')
-    }
-
-    // 4. Add the grouping and sorting at the very end
-    queryText += ` GROUP BY r.id, u.name ORDER BY r.name ASC`
-
-    const result = await pool.query(queryText, values)
-    
     res.json({
-      restaurants: result.rows
+      restaurants: result.rows,
+      pagination: { page, limit, total: result.rows[0]?.total_count || 0 }
     })
 
   } catch (error) {
@@ -91,9 +78,7 @@ router.get(
     try {
       const result = await pool.query(`
         SELECT
-          r.id,
-          r.name,
-          r.created_at,
+          r.*,
           COALESCE(
             json_agg(
               json_build_object(
@@ -102,7 +87,12 @@ router.get(
                 'area', rb.area,
                 'city', rb.city,
                 'phone', rb.phone,
-                'is_open', rb.is_open
+                'is_open', rb.is_open,
+                'division', rb.division,
+                'delivery_fee', rb.delivery_fee,
+                'min_order_amount', rb.min_order_amount,
+                'eta_min', rb.eta_min,
+                'eta_max', rb.eta_max
               ) ORDER BY rb.id
             ) FILTER (WHERE rb.id IS NOT NULL),
             '[]'
@@ -147,17 +137,15 @@ router.get('/:id', async (req, res) => {
   try {
     const restaurantResult = await pool.query(`
       SELECT
-        r.id,
-        r.name,
-        r.created_at,
+        r.*,
         u.name AS owner_name,
-        u.phone AS owner_phone,
+
         -- Same stored columns as the list endpoint above, maintained by
         -- trg_sync_restaurant_rating rather than recomputed here.
         r.avg_rating AS average_rating,
         r.review_count
       FROM restaurants r
-      JOIN users u
+      LEFT JOIN users u
         ON r.owner_id = u.id
       WHERE r.id = $1
     `, [id])
@@ -179,6 +167,7 @@ router.get('/:id', async (req, res) => {
         phone,
         latitude,
         longitude,
+        division, delivery_fee, min_order_amount, eta_min, eta_max,
         is_open
       FROM restaurant_branches
       WHERE restaurant_id = $1
@@ -225,7 +214,7 @@ router.post(
 
     const { name } = req.body
 
-    if (!name) {
+    if (typeof name !== 'string' || !name.trim() || name.length > 100) {
       return res.status(400).json({
         error: 'Restaurant name is required.'
       })
@@ -283,7 +272,7 @@ router.post(
       city,
       phone,
       latitude,
-      longitude
+      longitude, division, delivery_fee = 49, min_order_amount = 0, eta_min = 25, eta_max = 45
     } = req.body
 
     if (id === null) {
@@ -292,9 +281,16 @@ router.post(
       })
     }
 
-    if (!address || !area || !city) {
+    if (![address,area,city].every(value => typeof value === 'string' && value.trim() && value.length <= 500) ||
+        !['Dhaka','Chattogram','Rajshahi','Khulna','Barishal','Sylhet','Rangpur','Mymensingh'].includes(division) ||
+        !Number.isFinite(Number(delivery_fee)) || Number(delivery_fee) < 0 || Number(delivery_fee) > 5000 ||
+        !Number.isFinite(Number(min_order_amount)) || Number(min_order_amount) < 0 ||
+        !Number.isInteger(eta_min) || !Number.isInteger(eta_max) || eta_min < 1 || eta_max < eta_min || eta_max > 300 ||
+        ((latitude == null) !== (longitude == null)) ||
+        (latitude != null && (!Number.isFinite(Number(latitude)) || Math.abs(Number(latitude)) > 90)) ||
+        (longitude != null && (!Number.isFinite(Number(longitude)) || Math.abs(Number(longitude)) > 180))) {
       return res.status(400).json({
-        error: 'Address, area, and city are required.'
+        error: 'Provide address, area, city, division and valid delivery fees, ETA and coordinates.'
       })
     }
 
@@ -330,9 +326,9 @@ router.post(
           city,
           phone,
           latitude,
-          longitude
+          longitude, division, delivery_fee, min_order_amount, eta_min, eta_max
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING *
       `, [
         id,
@@ -341,7 +337,7 @@ router.post(
         city,
         phone,
         latitude,
-        longitude
+        longitude, division, delivery_fee, min_order_amount, eta_min, eta_max
       ])
 
       await client.query('COMMIT')
@@ -449,5 +445,26 @@ router.patch(
   }
 )
 
+
+// Owners may edit their public profile. Directory ownership and approval cannot
+// be self-assigned by this endpoint.
+router.patch('/:id', authenticateToken, requireRole('restaurant_owner', 'admin'), async (req, res) => {
+  const id = parseId(req.params.id)
+  const { name, description = '', cuisine = 'Bangladeshi', image_url = '', image_credit = '', image_source_url = '' } = req.body
+  if (!id || typeof name !== 'string' || !name.trim() || name.length > 100 ||
+    typeof description !== 'string' || description.length > 3000 ||
+    typeof cuisine !== 'string' || !cuisine.trim() || cuisine.length > 100 ||
+    typeof image_url !== 'string' || image_url.length > 2048 || (image_url && !/^https:\/\/[^\s]+$|^\/media\/[\w-]+\.(jpg|jpeg|png|webp)$/.test(image_url)) ||
+    typeof image_credit !== 'string' || image_credit.length > 500 ||
+    typeof image_source_url !== 'string' || image_source_url.length > 2048 || (image_source_url && !/^https:\/\/[^\s]+$/.test(image_source_url))) {
+    return res.status(400).json({ error: 'Provide a name, cuisine, description and valid HTTPS photo details.' })
+  }
+  const result = await pool.query(`UPDATE restaurants SET name=$1,description=$2,cuisine=$3,
+    image_url=$4,image_credit=$5,image_source_url=$6
+    WHERE id=$7 AND (owner_id=$8 OR $9='admin') RETURNING *`,
+  [name.trim(), description, cuisine.trim(), image_url || null, image_credit || null, image_source_url || null, id, req.user.id, req.user.role])
+  if (!result.rowCount) return res.status(404).json({ error: 'Restaurant not found for your account.' })
+  res.json({ restaurant: result.rows[0] })
+})
 
 module.exports = router

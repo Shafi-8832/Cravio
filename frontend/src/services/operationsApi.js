@@ -1,0 +1,10 @@
+import api from '../utils/api'
+export const getTickets = () => api.get('/api/operations/tickets')
+export const createTicket = payload => api.post('/api/operations/tickets', payload)
+export const updateTicket = (id, payload) => api.patch('/api/operations/tickets/' + id, payload)
+export const getPromos = () => api.get('/api/operations/promos')
+export const createPromo = payload => api.post('/api/operations/promos', payload)
+export const togglePromo = (id, is_active) => api.patch('/api/operations/promos/' + id, { is_active })
+export const getPlatformOrders = (params = {}) => api.get('/api/operations/orders', { params })
+export const getSummary = () => api.get('/api/operations/summary')
+export const getHealth = () => api.get('/api/health')

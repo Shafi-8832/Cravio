@@ -12,6 +12,7 @@
 // ============================================================
 
 require('dotenv').config({ quiet: true })
+if (!/_(test|review)$/.test(new URL(process.env.DATABASE_URL).pathname.slice(1))) throw new Error('Tests require a separate database ending _test or _review')
 const pool = require('../db/pool')
 
 const B = process.env.TEST_BASE_URL || `http://localhost:${process.env.PORT || 8000}`
@@ -175,7 +176,7 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   const o = order.body.order
   check('order subtotal matches cart subtotal', Number(o.subtotal) === expectedSubtotal, `got ${o.subtotal}`)
   check('WELCOME20 applied 20%', Number(o.discount_amount) === Number((expectedSubtotal * 0.2).toFixed(2)), `got ${o.discount_amount}`)
-  check('total = subtotal - discount', Number(o.total_amount) === expectedSubtotal - Number(o.discount_amount))
+  check('total = subtotal - discount + delivery fee', Number(o.total_amount) === expectedSubtotal - Number(o.discount_amount) + Number(openBranch.delivery_fee))
 
   const orderedBig = o.items.find(i => i.modifiers.length === 2)
   check('order item carries modifier snapshot', orderedBig && orderedBig.modifiers.length === 2, JSON.stringify(orderedBig?.modifiers))
@@ -233,8 +234,9 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   check('second order placed', order2.status === 201, JSON.stringify(order2.body))
   const o2 = order2.body.order
 
-  const ref = await call('POST', `/api/payments/${o2.id}/reference`, cust, { transaction_ref: 'BK123456789' })
-  check('bkash reference accepted', ref.status === 200 && ref.body.payment.transaction_ref === 'BK123456789', JSON.stringify(ref.body))
+  const testReference = 'BK' + Date.now() + 'A'
+  const ref = await call('POST', `/api/payments/${o2.id}/reference`, cust, { transaction_ref: testReference })
+  check('bkash reference accepted', ref.status === 200 && ref.body.payment.transaction_ref === testReference, JSON.stringify(ref.body))
   check('reference does not self-mark paid', ref.body.payment.status === 'unpaid')
 
   const selfPaid = await call('PATCH', `/api/payments/${o2.id}/status`, cust, { status: 'paid' })
@@ -267,6 +269,10 @@ const section = (t) => console.log(`\n=== ${t} ===`)
     })
     if (placed.status !== 201) throw new Error('placeAndDeliver: order failed ' + JSON.stringify(placed.body))
     const id = placed.body.order.id
+    if (method !== 'cash_on_delivery') {
+      await call('POST', `/api/payments/${id}/reference`, token, { transaction_ref: `BK-LIFECYCLE-${id}` })
+      await call('PATCH', `/api/payments/${id}/status`, ownerPizza, { status: 'paid' })
+    }
     await call('PATCH', `/api/orders/${id}/status`, ownerPizza, { status: 'confirmed' })
     await call('PATCH', `/api/orders/${id}/status`, ownerPizza, { status: 'preparing' })
     await call('POST', `/api/rider/deliveries/${id}/accept`, rider)
@@ -277,18 +283,13 @@ const section = (t) => console.log(`\n=== ${t} ===`)
 
   section('owner confirms an online payment')
   const bkashId = await placeAndDeliver(cust, pizza.id, margherita.id, [regular.id], openBranch.id, 'bkash')
-  await call('POST', `/api/payments/${bkashId}/reference`, cust, { transaction_ref: 'BK987654321' })
-
-  const confirm = await call('PATCH', `/api/payments/${bkashId}/status`, ownerPizza, { status: 'paid' })
-  check('owner marks bkash paid -> 200', confirm.status === 200, JSON.stringify(confirm.body))
-  check('paid_at set on confirm', confirm.body.payment.paid_at !== null)
-
+  const settled = await call('GET', `/api/payments/${bkashId}`, cust)
+  check('owner verified mobile payment before dispatch', settled.body.payment.status === 'paid')
+  check('paid_at set on confirm', settled.body.payment.paid_at !== null)
   const reverse = await call('PATCH', `/api/payments/${bkashId}/status`, ownerPizza, { status: 'failed' })
-  check('owner reverses to failed -> 200', reverse.status === 200, JSON.stringify(reverse.body))
-  check('paid_at cleared on reverse', reverse.body.payment.paid_at === null)
-
-  const noChange = await call('PATCH', `/api/payments/${bkashId}/status`, ownerPizza, { status: 'failed' })
-  check('same status twice -> 409 NO_STATUS_CHANGE', noChange.status === 409 && noChange.body.code === 'NO_STATUS_CHANGE')
+  check('settled payment cannot silently reverse -> 409', reverse.status === 409 && reverse.body.code === 'ALREADY_PAID')
+  const replaceRef = await call('POST', `/api/payments/${bkashId}/reference`, cust, { transaction_ref: 'REPLACEMENT' })
+  check('settled payment reference cannot be overwritten', replaceRef.status === 409)
 
   // ---------------------------------------------------------
   section('quality flag pipeline (3x way_less)')

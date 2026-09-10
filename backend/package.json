@@ -8,7 +8,14 @@
     "dev": "nodemon server.js",
     "seed:admin": "node scripts/seedAdmin.js",
     "seed": "node scripts/seed.js",
-    "test": "node tests/e2e.js"
+    "test": "node ../scripts/test-backend.js",
+    "db:setup": "node scripts/migrate.js",
+    "seed:bangladesh": "node scripts/seedBangladesh.js",
+    "catalog:check": "node scripts/importCatalog.js",
+    "seed:real": "node scripts/seedRealBangladesh.js --apply",
+    "catalog:real:check": "node scripts/seedRealBangladesh.js --check",
+    "photos:check": "node scripts/backfillPhotos.js --check",
+    "photos:backfill": "node scripts/backfillPhotos.js --apply"
   },
   "keywords": [],
   "author": "",

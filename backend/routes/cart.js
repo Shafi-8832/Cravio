@@ -235,10 +235,10 @@ router.post(
     }
 
 
-    if (!Number.isInteger(quantity) || quantity <= 0) {
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 99) {
 
       return res.status(400).json({
-        error: 'Quantity must be a positive integer.'
+        error: 'Quantity must be an integer between 1 and 99.'
       })
 
     }
@@ -291,11 +291,12 @@ router.post(
 
       const menuItemResult = await client.query(`
         SELECT
-          id,
-          restaurant_id,
-          is_available
-        FROM menu_items
-        WHERE id = $1
+          mi.id,
+          mi.restaurant_id,
+          mi.is_available,
+          r.ordering_enabled
+        FROM menu_items mi JOIN restaurants r ON r.id = mi.restaurant_id
+        WHERE mi.id = $1
       `, [menuItemId])
 
 
@@ -320,6 +321,11 @@ router.post(
         })
       }
 
+
+      if (!menuItem.ordering_enabled) {
+        await client.query('ROLLBACK')
+        return res.status(409).json({ error: 'This restaurant is not accepting orders.', code: 'RESTAURANT_NOT_ORDERABLE' })
+      }
 
       if (!menuItem.is_available) {
         await client.query('ROLLBACK')
@@ -415,7 +421,7 @@ router.post(
         // not, which is why the check is skipped at zero rather than always.
         const minimumApplies = group.is_required || chosenCount > 0
 
-        if (minimumApplies && chosenCount < group.min_selection) {
+        if (minimumApplies && chosenCount < Math.max(group.min_selection, group.is_required ? 1 : 0)) {
           await client.query('ROLLBACK')
 
           return res.status(400).json({
@@ -444,59 +450,14 @@ router.post(
     
       /* (user_id, restaurant_id) functionally determines ---> carts(id) (PK) */
 
+      // The unique cart row is the lock shared by add, edit, remove and checkout.
+      // A lock on a missing cart_items row cannot prevent duplicate inserts.
       const cartResult = await client.query(`
-        SELECT id
-        FROM carts
-
-        WHERE user_id = $1
-        AND restaurant_id = $2
-
-      `,[
-        userId,
-        restaurantId
-      ])
-
-
-
-      let cartId
-
-
-
-      // =====================================================
-      // Create cart if it does not exist
-      // =====================================================
-
-      if(cartResult.rows.length === 0){
-
-
-        const newCart = await client.query(`
-
-          INSERT INTO carts
-          (
-            user_id,
-            restaurant_id
-          )
-
-          VALUES
-          ($1,$2)
-
-
-          RETURNING id
-
-        `,[
-          userId,
-          restaurantId
-        ])
-
-        cartId = newCart.rows[0].id // guaranteed to return 1 row by business rule
-
-      }
-      else{
-
-        cartId = cartResult.rows[0].id // too
-
-      }
-
+        INSERT INTO carts (user_id, restaurant_id) VALUES ($1, $2)
+        ON CONFLICT (user_id, restaurant_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+        RETURNING id
+      `, [userId, restaurantId])
+      const cartId = cartResult.rows[0].id
 
       // =====================================================
       // Insert item
@@ -519,7 +480,7 @@ router.post(
       // line back and diffing it in JS.
       const matchingLine = await client.query(`
 
-        SELECT ci.id
+        SELECT ci.id, ci.quantity
 
         FROM cart_items ci
 
@@ -546,6 +507,10 @@ router.post(
 
 
       if (matchingLine.rows.length > 0) {
+        if (matchingLine.rows[0].quantity + quantity > 99) {
+          await client.query('ROLLBACK')
+          return res.status(400).json({ error: 'A cart line can contain at most 99 items.' })
+        }
 
         await client.query(`
           UPDATE cart_items
@@ -642,295 +607,52 @@ router.post(
 
 
 
-// ============================================================
-// PATCH /api/cart/items/:itemId
-// customer only
-// Updates quantity
-// ============================================================
-
-
-
-router.patch(
-  '/items/:itemId',
-  authenticateToken,
-  requireRole('customer'),
-  async (req, res) => {
-    const itemId = Number(req.params.itemId)
-    const { quantity } = req.body
-
-    if (!Number.isInteger(itemId) || itemId <= 0) {
-      return res.status(400).json({
-        error: 'Invalid cart item ID.'
-      })
-    }
-
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      return res.status(400).json({
-        error: 'Quantity must be a positive integer.'
-      })
-    }
-
-    try {
-      const result = await pool.query(
-        `
-          UPDATE cart_items ci
-
-          SET quantity = $1
-
-          FROM carts c
-
-          WHERE ci.id = $2
-            AND ci.cart_id = c.id
-            AND c.user_id = $3
-
-          RETURNING ci.*
-        `,
-        [
-          quantity, // $1: সরাসরি যে quantity set হবে
-          itemId,
-          req.user.id
-        ]
-      )
-      /* itemId-এর কোনো cart item নেই।
-        Item আছে, কিন্তু cart অন্য user-এর। */
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          error: 'Cart item not found.'
-        })
-      }
-
-      return res.json({
-        item: result.rows[0],
-        message: 'Quantity updated.'
-      })
-    } catch (error) {
-      console.error(
-        'Set cart item quantity error:',
-        error
-      )
-
-      return res.status(500).json({
-        error: 'Server error updating cart.'
-      })
-    }
+// All line mutations lock their parent cart first, matching place_order().
+// After waiting, the second SELECT observes whether checkout deleted the line.
+async function changeLine(req, res) {
+  const itemId = parseId(req.params.itemId)
+  const isDelete = req.method === 'DELETE'
+  const isAdjust = req.path.endsWith('/adjust')
+  if (!itemId) return res.status(400).json({ error: 'Invalid cart item ID.' })
+  if (!isDelete && (isAdjust ? ![1, -1].includes(req.body.change)
+    : !Number.isInteger(req.body.quantity) || req.body.quantity < 1 || req.body.quantity > 99)) {
+    return res.status(400).json({ error: isAdjust ? 'Change must be 1 or -1.' : 'Quantity must be between 1 and 99.' })
   }
-)
-
-// ============================================================
-// PATCH /api/cart/items/:itemId/adjust
-// customer only
-// atomic increase/decrease and confirmation of deletion if quantity hits 0
-// ============================================================
-
-router.patch(
-  '/items/:itemId/adjust',
-  authenticateToken,
-  requireRole('customer'),
-  async (req, res) => {
-    const itemId = Number(req.params.itemId)
-    const { change } = req.body
-
-    if (!Number.isInteger(itemId) || itemId <= 0) {
-      return res.status(400).json({
-        error: 'Invalid cart item ID.'
-      })
-    }
-
-    if (change !== 1 && change !== -1) {
-      return res.status(400).json({
-        error: 'Change must be either 1 or -1.'
-      })
-    }
-
-    const client = await pool.connect()
-
-    try {
-      await client.query('BEGIN')
-
-      /*
-       * FOR UPDATE locks this cart-item row until the transaction ends.
-       * Therefore, simultaneous +/- requests cannot overwrite each other.
-       */
-      const itemResult = await client.query(
-        `
-          SELECT
-            ci.id,
-            ci.quantity
-
-          FROM cart_items ci
-
-          JOIN carts c
-            ON ci.cart_id = c.id
-
-          WHERE ci.id = $1
-            AND c.user_id = $2
-
-          FOR UPDATE OF ci
-        `,
-        [
-          itemId,
-          req.user.id
-        ]
-      )
-
-      if (itemResult.rows.length === 0) {
-        await client.query('ROLLBACK')
-
-        return res.status(404).json({ // returns here, so the codes down below is guaranteed to be authenticated
-          error: 'Cart item not found.'
-        })
-      }
-
-      const currentQuantity =
-        itemResult.rows[0].quantity
-
-      const newQuantity =
-        currentQuantity + change
-
-      /*
-       * Do not allow quantity to become zero.
-       * Tell the frontend to request confirmation.
-       */
-      if (newQuantity === 0) {
-        await client.query('ROLLBACK')
-
-        return res.status(409).json({
-          code: 'REMOVE_CONFIRMATION_REQUIRED',
-          currentQuantity,
-          message:
-            "Do you want to remove this item from your cart? Quantity can't be 0."
-        })
-      }
-
-      const updateResult = await client.query(
-        `
-          UPDATE cart_items
-
-          SET quantity = quantity + $1
-
-          WHERE id = $2
-
-          RETURNING *
-        `,
-        [
-          change,
-          itemId
-        ]
-      )
-
-      await client.query('COMMIT')
-
-      return res.json({
-        item: updateResult.rows[0],
-        message:
-          change === 1
-            ? 'Quantity increased.'
-            : 'Quantity decreased.'
-      })
-    } catch (error) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(`SELECT c.id FROM carts c JOIN cart_items ci ON ci.cart_id=c.id
+      WHERE ci.id=$1 AND c.user_id=$2 FOR UPDATE OF c`, [itemId, req.user.id])
+    const found = await client.query(`SELECT ci.* FROM cart_items ci JOIN carts c ON c.id=ci.cart_id
+      WHERE ci.id=$1 AND c.user_id=$2`, [itemId, req.user.id])
+    if (!found.rowCount) {
       await client.query('ROLLBACK')
-
-      console.error(
-        'Adjust cart item quantity error:',
-        error
-      )
-
-      return res.status(500).json({
-        error: 'Server error adjusting cart quantity.'
-      })
-    } finally {
-      client.release()
+      return res.status(404).json({ error: 'Cart item not found.' })
     }
+    const quantity = isAdjust ? found.rows[0].quantity + req.body.change : req.body.quantity
+    if (!isDelete && quantity === 0) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ code: 'REMOVE_CONFIRMATION_REQUIRED', currentQuantity: 1, message: 'Remove this item from your cart?' })
+    }
+    if (!isDelete && quantity > 99) {
+      await client.query('ROLLBACK')
+      return res.status(400).json({ error: 'A cart line can contain at most 99 items.' })
+    }
+    const result = isDelete
+      ? await client.query('DELETE FROM cart_items WHERE id=$1 RETURNING id', [itemId])
+      : await client.query('UPDATE cart_items SET quantity=$1 WHERE id=$2 RETURNING *', [quantity, itemId])
+    await client.query('UPDATE carts SET updated_at=CURRENT_TIMESTAMP WHERE id=$1', [found.rows[0].cart_id])
+    await client.query('COMMIT')
+    res.json({ item: result.rows[0], message: isDelete ? 'Item removed.' : 'Quantity updated.' })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
   }
-)
-
-// ============================================================
-// DELETE /api/cart/items/:itemId
-// customer only
-// Removes item from user's cart
-// ============================================================
-
-// shift option A = comment
-// cmd + crtl + shift + right arrow = function select
-
-router.delete(
-  '/items/:itemId',
-  authenticateToken,
-  requireRole('customer'),
-  async(req,res)=>{
-
-
-    const itemId = parseId(req.params.itemId)
-
-    if (itemId === null) {
-      return res.status(400).json({
-        error: 'Invalid cart item ID.'
-      })
-    }
-
-
-    /* the condition AND ci.cart_id = c.id is important
-    * suppose the user with req.user.id doesn't even have that item in their cart
-    * so we must check 2 things
-    * 1. the user is authenticated
-    * 2. the user actually has that cart!
-    * an authenticated hacker might want to delete someone else's cart
-     */
-    try{
-      const result = await pool.query(`
-
-        DELETE FROM cart_items ci
-        USING carts c
-        WHERE ci.id=$1
-        AND ci.cart_id=c.id
-
-        AND c.user_id=$2
-
-
-        RETURNING ci.id
-
-      `,[
-        itemId,
-        req.user.id
-      ])
-
-      if(result.rows.length===0){
-
-        return res.status(404).json({
-
-          error:'Cart item not found.'
-
-        })
-
-      }
-
-      res.json({
-
-        message:'Item removed from cart.'
-
-      })
-
-    }catch(error){
-
-
-      console.error(
-        'Delete cart item error:',
-        error
-      )
-
-
-      res.status(500).json({
-
-        error:'Server error deleting item.'
-
-      })
-
-    }
-
-
-  }
-)
-
-
+}
+router.patch('/items/:itemId', authenticateToken, requireRole('customer'), changeLine)
+router.patch('/items/:itemId/adjust', authenticateToken, requireRole('customer'), changeLine)
+router.delete('/items/:itemId', authenticateToken, requireRole('customer'), changeLine)
 
 module.exports = router

@@ -39,6 +39,9 @@ AS $$
 DECLARE
     v_restaurant_id INTEGER;
     v_branch_is_open BOOLEAN;
+    v_ordering_enabled BOOLEAN;
+    v_delivery_fee NUMERIC(10,2);
+    v_min_order_amount NUMERIC(10,2);
     v_cart_id INTEGER;
     v_order_id INTEGER;
     v_subtotal DECIMAL(10,2);
@@ -56,7 +59,7 @@ BEGIN
         SELECT 1
         FROM users
         WHERE id = p_customer_id
-          AND role = 'customer'
+          AND role = 'customer' AND is_active = true
     ) THEN
         RAISE EXCEPTION 'CUSTOMER_NOT_FOUND_OR_INVALID_ROLE';
     END IF;
@@ -65,20 +68,22 @@ BEGIN
         RAISE EXCEPTION 'INVALID_DELIVERY_ADDRESS';
     END IF;
 
-    IF p_payment_method NOT IN ('cash_on_delivery', 'bkash', 'nagad') THEN
+    IF p_payment_method IS NULL OR p_payment_method NOT IN ('cash_on_delivery', 'bkash', 'nagad') THEN
         RAISE EXCEPTION 'INVALID_PAYMENT_METHOD';
     END IF;
     -- SETUP && VALIDATION
 
 
     -- FOR SHARE = row level lock, locks UPDATE/DELETE for others, but others can READ that row
-    -- FOR UPDATE = brutal full row level lock. locks UPDATE/DELETE/READ for others
+    -- FOR UPDATE blocks conflicting row locks and writes; ordinary SELECT still reads committed data.
 
 
     -- The branch identifies which restaurant cart must be checked out.
-    SELECT rb.restaurant_id, rb.is_open
-    INTO v_restaurant_id, v_branch_is_open
+    SELECT rb.restaurant_id, rb.is_open, rb.delivery_fee, rb.min_order_amount, (r.ordering_enabled AND u.is_active)
+    INTO v_restaurant_id, v_branch_is_open, v_delivery_fee, v_min_order_amount, v_ordering_enabled
     FROM restaurant_branches rb
+    JOIN restaurants r ON r.id = rb.restaurant_id
+    JOIN users u ON u.id = r.owner_id AND u.role = 'restaurant_owner'
     WHERE rb.id = p_branch_id
     FOR SHARE; -- Prevents restaurant_owner from UPDATE ing/closing the branch mid-transaction, while allowing concurrent customer checkouts (READ).
     -- t=1 is_open is read TRUE
@@ -91,6 +96,10 @@ BEGIN
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'BRANCH_NOT_FOUND';
+    END IF;
+
+    IF NOT v_ordering_enabled THEN
+        RAISE EXCEPTION 'RESTAURANT_NOT_ORDERABLE';
     END IF;
 
     IF NOT v_branch_is_open THEN
@@ -117,6 +126,35 @@ BEGIN
         WHERE cart_id = v_cart_id
     ) THEN
         RAISE EXCEPTION 'CART_EMPTY';
+    END IF;
+
+    -- Hold menu prices and modifier definitions stable until snapshots are copied.
+    -- All cart mutations take the cart row lock above before touching its lines.
+    PERFORM mi.id FROM menu_items mi JOIN cart_items ci ON ci.menu_item_id = mi.id
+      WHERE ci.cart_id = v_cart_id ORDER BY mi.id FOR SHARE OF mi;
+    PERFORM mg.id FROM modifier_groups mg JOIN cart_items ci ON ci.menu_item_id = mg.menu_item_id
+      WHERE ci.cart_id = v_cart_id ORDER BY mg.id FOR SHARE OF mg;
+    PERFORM mo.id FROM modifier_options mo
+      JOIN cart_item_modifiers cim ON cim.modifier_option_id = mo.id
+      JOIN cart_items ci ON ci.id = cim.cart_item_id
+      WHERE ci.cart_id = v_cart_id ORDER BY mo.id FOR SHARE OF mo;
+
+    -- Group requirements may have changed since the customer added the item.
+    IF EXISTS (
+      SELECT 1 FROM cart_items ci JOIN modifier_groups mg ON mg.menu_item_id = ci.menu_item_id
+      LEFT JOIN cart_item_modifiers cim ON cim.cart_item_id = ci.id
+      LEFT JOIN modifier_options mo ON mo.id = cim.modifier_option_id AND mo.modifier_group_id = mg.id
+      WHERE ci.cart_id = v_cart_id
+      GROUP BY ci.id, mg.id
+      HAVING COUNT(mo.id) > mg.max_selection OR
+        ((mg.is_required OR COUNT(mo.id) > 0) AND COUNT(mo.id) < GREATEST(mg.min_selection, CASE WHEN mg.is_required THEN 1 ELSE 0 END))
+    ) OR EXISTS (
+      SELECT 1 FROM cart_item_modifiers cim JOIN cart_items ci ON ci.id = cim.cart_item_id
+      JOIN modifier_options mo ON mo.id = cim.modifier_option_id
+      JOIN modifier_groups mg ON mg.id = mo.modifier_group_id
+      WHERE ci.cart_id = v_cart_id AND mg.menu_item_id <> ci.menu_item_id
+    ) THEN
+      RAISE EXCEPTION 'CART_MODIFIERS_CHANGED';
     END IF;
 
     -- A cart row is labeled with restaurant_id, but every actual item is
@@ -180,6 +218,10 @@ BEGIN
         RAISE EXCEPTION 'CART_EMPTY';
     END IF;
 
+    IF v_subtotal < v_min_order_amount THEN
+        RAISE EXCEPTION 'BRANCH_MINIMUM_NOT_MET';
+    END IF;
+
     IF p_promo_code IS NOT NULL AND btrim(p_promo_code) <> '' THEN
         -- Locking the promo row prevents concurrent requests from exceeding promo code usage limit
         SELECT pc.*
@@ -237,7 +279,7 @@ BEGIN
     END IF;
 
     -- explain this line? This line calculates the total amount for the order by subtracting the discount from the subtotal and ensuring it's not negative.
-    v_total := GREATEST(v_subtotal - v_discount, 0.00);
+    v_total := GREATEST(v_subtotal - v_discount, 0.00) + v_delivery_fee;
 
     INSERT INTO orders (
         customer_id,
@@ -247,6 +289,7 @@ BEGIN
         subtotal,
         discount_amount,
         total_amount,
+        delivery_fee,
         status
     )
     VALUES (
@@ -257,6 +300,7 @@ BEGIN
         v_subtotal,
         v_discount,
         v_total,
+        v_delivery_fee,
         'pending'
     )
     RETURNING id INTO v_order_id;
@@ -280,7 +324,7 @@ BEGIN
             ci.id AS cart_item_id,
             ci.menu_item_id,
             ci.quantity,
-            mi.price
+            mi.price, mi.name, mi.image_url
         FROM cart_items ci
         JOIN menu_items mi ON mi.id = ci.menu_item_id
         WHERE ci.cart_id = v_cart_id -- don't get confused about v_cart_id, we have already found the cart_id before and put it in v_cart_id, now we are just reusing the variable
@@ -291,12 +335,16 @@ BEGIN
             order_id,
             menu_item_id,
             quantity,
+            item_name,
+            image_url,
             unit_price -- records the price of the menu item at the time of order, so that if the menu price changes later, the order still reflects the original price.
         )
         VALUES (
             v_order_id,
             v_cart_item.menu_item_id,
             v_cart_item.quantity,
+            v_cart_item.name,
+            v_cart_item.image_url,
             v_cart_item.price
         )
         RETURNING id INTO v_order_item_id;

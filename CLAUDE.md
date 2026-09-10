@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Cravio is a food-delivery app built as coursework for CSE 216 (Database Management Systems). Express + PostgreSQL backend, React (Vite) frontend. There is no test suite; verification is done manually through the app or the Postman collections in `postman/`.
+Cravio is a food-delivery app built as coursework for CSE 216 (Database Management Systems). Express + PostgreSQL backend, React (Vite) frontend. Backend regression suites now exist: use `npm run test:backend` with a separate TEST_DATABASE_URL; see docs/SETUP.md. Never use business data as the test target.
 
 ## Commands
 
@@ -24,22 +24,7 @@ npm run build
 npm run lint    # eslint
 ```
 
-Database setup — order matters, and `schema.sql` starts with a `DROP TABLE ... CASCADE`, so applying it wipes all data:
-
-```bash
-psql "$DATABASE_URL" -f backend/db/schema.sql
-psql "$DATABASE_URL" -f backend/db/functions/place_order.sql        # function + indexes; run after schema
-psql "$DATABASE_URL" -f backend/db/functions/restaurant_rating.sql  # rating function + trigger + backfill; run last
-```
-
-`restaurant_rating.sql` goes last because its backfill reads `restaurants`, `restaurant_reviews`, `orders` and `restaurant_branches`, and it writes the `restaurants.avg_rating` / `review_count` columns that `schema.sql` creates. It is independent of `place_order.sql` — the order between those two does not matter.
-
-For an **existing** database that predates those columns, run the migration first (it only adds the columns), then the same file:
-
-```bash
-psql "$DATABASE_URL" -f backend/db/migrations/002_restaurant_ratings.sql
-psql "$DATABASE_URL" -f backend/db/functions/restaurant_rating.sql
-```
+Database setup: use `npm run db:migrate` from the root. It bootstraps only an empty database and otherwise applies additive, checksummed migrations. Never manually run the destructive `schema.sql` reset against an existing database. The runner also installs the checkout function, rating trigger and delivery-completion procedure. See `docs/SETUP.md` for the current workflow.
 
 ## Architecture
 
