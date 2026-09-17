@@ -53,7 +53,7 @@ export default function RoleChooser({ signup = false }) {
     <p className="text-center text-xs muted mt-3">
       Administrator accounts are created by the platform team, not through signup.
       {/* Admins get no card, so the chooser still has to offer them a door. */}
-      {!signup && <> <Link className="font-bold text-stone-700 underline" to="/login/staff">Staff log in</Link></>}
+      {!signup && <> <Link className="font-bold text-stone-700 underline" to="/admin/login">Staff log in</Link></>}
     </p>
   </main>
 }

@@ -37,11 +37,11 @@ export default function AuthForm({ role, signup = false }) {
       // claim: the server reads the account's real role from the users
       // table and rejects with 403 if the two disagree. It never decides
       // what the account is.
-      // The staff screen is un-scoped: it sends no expectedRole at all, so an
-      // admin (who has no card) logs in exactly as before.
-      const credentials = { email: form.email, password: form.password }
-      if (!role.generic) credentials.expectedRole = role.key
-      const response = await (signup ? signUp({ ...form, role: role.key }) : signIn(credentials))
+      // Every login screen is scoped, the staff one included — otherwise a
+      // customer's password would authenticate on the admin page.
+      const response = await (signup
+        ? signUp({ ...form, role: role.key })
+        : signIn({ email: form.email, password: form.password, expectedRole: role.key }))
       const signedInUser = response.data.user
       login(signedInUser, response.data.token)
       // Where we land follows the role the SERVER returned, not the card
@@ -101,7 +101,7 @@ export default function AuthForm({ role, signup = false }) {
           </form>
 
           {/* No signup counterpart for the staff screen — admin accounts are seeded, not registered. */}
-          {!role.generic && <p className="text-sm muted mt-6 text-center">
+          {!role.noSignup && <p className="text-sm muted mt-6 text-center">
             {signup ? 'Already have an account? ' : 'New to Cravio? '}
             <Link className={'font-bold ' + accent.text} to={`${signup ? '/login' : '/signup'}/${slug}`}>
               {signup ? `Log in as a ${role.label.toLowerCase()}` : `Create a ${role.label.toLowerCase()} account`}

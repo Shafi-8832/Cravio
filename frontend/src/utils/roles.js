@@ -54,12 +54,16 @@ export const AUTH_ROLES = {
 
 // Administrators deliberately have no card on the chooser: their accounts
 // are seeded by the platform team, never signed up for. They still need a
-// way in, so /login/staff renders this screen. `generic` marks it as the
-// un-scoped login — the form sends no expectedRole, and the server simply
-// issues a token for whatever role the account's database row holds.
+// way in, so /login/staff renders this screen.
+//
+// `key` is the real database role, not the URL word 'staff', because it is
+// sent as expectedRole and the server matches it against users.role. This
+// screen is scoped exactly like the three cards: a customer who types their
+// own password here is refused by the server with a 403. `noSignup` only
+// hides the "create an account" footer — admins are seeded, not registered.
 export const STAFF_LOGIN = {
-  key: 'staff',
-  generic: true,
+  key: 'admin',
+  noSignup: true,
   label: 'Staff',
   emoji: '🛡️',
   tagline: 'Platform team',

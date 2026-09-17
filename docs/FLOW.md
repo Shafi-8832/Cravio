@@ -753,7 +753,7 @@ is no second query and no string concatenation.
 - `backend/db/schema.sql` — the `CHECK (role IN (...))` constraint the allowlist mirrors
 - `frontend/src/components/AuthForm.jsx` — sends `expectedRole`, shows the server's refusal, redirects on the server's answer
 - `frontend/src/components/RoleChooser.jsx` — the three cards plus the cardless staff link
-- `frontend/src/utils/roles.js`, `frontend/src/pages/LoginPage.jsx` — the role each URL is scoped to, including `/login/staff`
+- `frontend/src/utils/roles.js`, `frontend/src/pages/LoginPage.jsx`, `frontend/src/App.jsx` — the role each URL is scoped to, including `/admin/login`
 
 ---
 
@@ -820,10 +820,19 @@ public internet), then looks the value up in a server-side list of the
 three self-service roles and inserts *its own copy*. The row can only ever
 hold a word this file approved.
 
-**The admin still gets in.** Admins have no card, so `/login/staff` renders
-the same form with no role attached. It sends no `expectedRole` at all, and
-the server behaves exactly as it always did: look up the row, check the
-password, issue a token for whatever role the row holds.
+**The admin door is scoped too.** Admins have no card, so `/admin/login`
+(also reachable as `/login/staff`) renders the same form. It was briefly
+wired as an *un-scoped* screen that sent no `expectedRole` — which meant a
+customer's own password authenticated there, because the server had nothing
+to compare against. It now sends `expectedRole: 'admin'` like every other
+screen, so a non-admin is refused with a 403 by the server. The role word it
+sends is `admin`, the value stored in `users.role` — not the URL word
+`staff`, which the database has never heard of and would reject as a 400.
+
+A login request with no `expectedRole` at all is still accepted, and still
+behaves as it always did: look up the row, check the password, issue a token
+for whatever role the row holds. That path exists for API clients and curl,
+not for any screen in the app.
 
 **The frontend's two jobs.** First, it shows the 403 message verbatim, so
 the user reads "This account is not registered as a rider" instead of

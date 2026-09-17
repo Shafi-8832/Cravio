@@ -34,10 +34,10 @@ const SIGNUP_ROLES = [
 // Human wording for the 403 we return when someone logs in through the
 // wrong role card, so the UI can show "not registered as a rider".
 const ROLE_LABELS = {
-  customer: 'customer',
-  restaurant_owner: 'restaurant owner',
-  rider: 'rider',
-  admin: 'administrator'
+  customer: 'a customer',
+  restaurant_owner: 'a restaurant owner',
+  rider: 'a rider',
+  admin: 'an administrator'
 }
 
 
@@ -394,7 +394,7 @@ router.post('/login', async (req, res) => {
 
       return res.status(403).json({
 
-        error: `This account is not registered as a ${ROLE_LABELS[expectedRole]}.`
+        error: `This account is not registered as ${ROLE_LABELS[expectedRole]}.`
 
       })
 

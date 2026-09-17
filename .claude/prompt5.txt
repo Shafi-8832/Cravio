@@ -1,0 +1,30 @@
+BUG: the /admin/login page logs in non-admin users successfully. A
+customer's credentials entered on the staff login page authenticate and
+land them in. This is a GRADED authorization failure.
+
+Investigate and fix. Check in this order:
+
+1. Does the /admin/login form actually send expectedRole: 'admin' in
+   the login request body? Show me the exact line that builds that
+   request. If expectedRole is missing, that is the bug.
+
+2. Does the backend login route compare expectedRole against the role
+   read from the users table, and return 403 on mismatch? Confirm this
+   still works — it was verified working for the customer/rider cards,
+   so do not break that path.
+
+3. Is 'admin' included in whatever allowlist validates expectedRole? If
+   the allowlist only contains customer/rider/owner, an expectedRole of
+   'admin' may be silently dropped or rejected as invalid, falling
+   through to the generic login path. Check this specifically.
+
+4. After a successful login through /admin/login, does the frontend
+   redirect based on the SERVER-returned role? A non-admin should never
+   reach the admin dashboard even if login itself succeeded.
+
+Fix the actual cause. Do not add a frontend-only check — hiding the
+form or redirecting in React is not enforcement. The 403 must come from
+the server.
+
+When done, tell me the exact line where expectedRole is sent and the
+exact line where the server compares it to the DB role.

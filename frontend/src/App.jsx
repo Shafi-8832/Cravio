@@ -38,6 +38,8 @@ function AppRoutes() {
     <Route path="/restaurants/:id" element={<RestaurantPage />} />
     <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
     <Route path="/login/:role" element={<PublicOnly><LoginPage /></PublicOnly>} />
+    {/* The staff door, under both the address admins are given and the slug form. */}
+    <Route path="/admin/login" element={<PublicOnly><LoginPage staff /></PublicOnly>} />
     <Route path="/signup" element={<PublicOnly><SignupPage /></PublicOnly>} />
     <Route path="/signup/:role" element={<PublicOnly><SignupPage /></PublicOnly>} />
     <Route path="/account" element={<RoleRoute><AccountPage /></RoleRoute>} />
