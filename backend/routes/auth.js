@@ -9,6 +9,39 @@ const authenticateToken = require('../middleware/auth')
 const router = express.Router()
 
 
+// The four role values the database will actually accept. This list is a
+// deliberate mirror of the CHECK constraint on users.role in
+// backend/db/schema.sql — if one changes, the other must change with it.
+// It exists so that a role value coming from a request can be checked
+// against a known set *before* it ever reaches SQL.
+const DB_ROLES = [
+  'customer',
+  'restaurant_owner',
+  'rider',
+  'admin'
+]
+
+
+// Roles a visitor may create for themselves. 'admin' is absent on purpose:
+// admins are seeded by the dev team (npm run seed:admin), never signed up.
+const SIGNUP_ROLES = [
+  'customer',
+  'restaurant_owner',
+  'rider'
+]
+
+
+// Human wording for the 403 we return when someone logs in through the
+// wrong role card, so the UI can show "not registered as a rider".
+const ROLE_LABELS = {
+  customer: 'customer',
+  restaurant_owner: 'restaurant owner',
+  rider: 'rider',
+  admin: 'administrator'
+}
+
+
+
 // ============================================================
 // SIGNUP
 // POST /api/auth/signup
@@ -54,18 +87,27 @@ router.post('/signup', async (req, res) => {
   }
 
 
-  const allowedRoles = [
-    'customer',
-    'restaurant_owner',
-    'rider'
-  ]
+  // Public signup can never mint an administrator, no matter what the
+  // client sends. This is a separate, explicit rejection so the refusal is
+  // obvious rather than hidden inside a generic "invalid role".
+  if (role === 'admin') {
+    return res.status(403).json({
+      error: 'Administrator accounts cannot be created through signup.'
+    })
+  }
 
 
-  if (!allowedRoles.includes(role)) {
+  if (!SIGNUP_ROLES.includes(role)) {
     return res.status(400).json({
       error: 'Invalid role.'
     })
   }
+
+
+  // Insert the value taken FROM the server-side allowlist, not the raw
+  // string off the request body. Same characters, but the row can now only
+  // ever hold something this file approved.
+  const roleToCreate = SIGNUP_ROLES.find(allowed => allowed === role)
 
 
   const client = await pool.connect()
@@ -122,7 +164,7 @@ router.post('/signup', async (req, res) => {
         trimmedName,
         trimmedEmail,
         hashedPassword,
-        role,
+        roleToCreate,
         trimmedPhone
       ]
 
@@ -132,7 +174,7 @@ router.post('/signup', async (req, res) => {
     const user = result.rows[0]
 
 
-    if (role === 'rider') {
+    if (roleToCreate === 'rider') {
 
       await client.query(
 
@@ -242,7 +284,8 @@ router.post('/login', async (req, res) => {
 
   const {
     email,
-    password
+    password,
+    expectedRole
   } = req.body
 
 
@@ -252,6 +295,23 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({
 
       error: "Email and password are required."
+
+    })
+
+  }
+
+
+
+  // expectedRole is the role card the visitor clicked ("I am logging in as
+  // a rider"). It is a CLAIM, not an identity: it can only ever cause a
+  // rejection further down. The real role is read from the users row.
+  // A generic login (the admin screen, or an API client) omits it, and
+  // then login behaves exactly as it always did.
+  if (expectedRole !== undefined && !DB_ROLES.includes(expectedRole)) {
+
+    return res.status(400).json({
+
+      error: "Invalid role."
 
     })
 
@@ -321,6 +381,28 @@ router.post('/login', async (req, res) => {
 
 
 
+    // The role that counts: read straight off the database row.
+    const actualRole = user.role
+
+
+    // Role mismatch is checked only AFTER the password has been verified.
+    // If it were checked first, anyone could type an email with no password
+    // and learn from the 403 which role that email belongs to — user
+    // enumeration. Failing the password first means a stranger always gets
+    // the same generic 401.
+    if (expectedRole !== undefined && expectedRole !== actualRole) {
+
+      return res.status(403).json({
+
+        error: `This account is not registered as a ${ROLE_LABELS[expectedRole]}.`
+
+      })
+
+    }
+
+
+
+
     if (!user.is_active) {
 
       return res.status(403).json({
@@ -356,7 +438,8 @@ router.post('/login', async (req, res) => {
 
         id: user.id,
         email: user.email,
-        role: user.role,
+        // From the database row, never from the request body.
+        role: actualRole,
         jti
 
       },

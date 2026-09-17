@@ -52,11 +52,35 @@ export const AUTH_ROLES = {
   },
 }
 
+// Administrators deliberately have no card on the chooser: their accounts
+// are seeded by the platform team, never signed up for. They still need a
+// way in, so /login/staff renders this screen. `generic` marks it as the
+// un-scoped login — the form sends no expectedRole, and the server simply
+// issues a token for whatever role the account's database row holds.
+export const STAFF_LOGIN = {
+  key: 'staff',
+  generic: true,
+  label: 'Staff',
+  emoji: '🛡️',
+  tagline: 'Platform team',
+  blurb: 'Administrator accounts are created by the platform team and are not tied to a signup card.',
+  loginTitle: 'Staff sign in.',
+  loginSubtitle: 'Log in with your platform credentials.',
+  photo: '/media/dish-margherita.jpg',
+  photoAlt: 'A margherita pizza',
+  accent: 'plum',
+  perks: ['Moderate restaurants and users', 'Watch orders across the platform', 'Suspend accounts when needed'],
+}
+
 // Short URL segments, because /signup/restaurant_owner reads badly and
 // leaks the database's spelling of the role into the address bar.
 const SLUGS = { customer: 'customer', rider: 'rider', owner: 'restaurant_owner' }
 
 export const roleFromSlug = slug => AUTH_ROLES[SLUGS[slug]] || null
+
+// Login knows one screen signup does not: the cardless staff login. Keeping
+// it out of roleFromSlug is what stops /signup/staff from ever existing.
+export const loginRoleFromSlug = slug => (slug === 'staff' ? STAFF_LOGIN : roleFromSlug(slug))
 export const slugForRole = role => Object.keys(SLUGS).find(slug => SLUGS[slug] === role)
 export const ROLE_LIST = [AUTH_ROLES.customer, AUTH_ROLES.rider, AUTH_ROLES.restaurant_owner]
 

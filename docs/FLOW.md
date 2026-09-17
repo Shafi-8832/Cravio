@@ -744,3 +744,117 @@ is no second query and no string concatenation.
 **Files involved:** `scripts/test-backend.js`, `backend/tests/e2e.js`, `marketplace.js`, `operations.js`, `catalog.test.js`.
 
 **Flow:** The harness refuses the application database and requires an explicitly named disposable test/review database. It migrates, seeds, starts a temporary API, exercises auth/ownership/concurrency/full order lifecycle and stops the API. Catalog/provider unit tests separately validate the source snapshots and exercise the optional Places adapter with fixture fetches, so they do not incur provider charges. `docs/REVIEW.md` records the observed results and remaining verification boundaries.
+
+### Role-gated login (the card you click is checked, never believed)
+
+**Files involved:**
+
+- `backend/routes/auth.js` — the login and signup routes, the role allowlists, the mismatch check
+- `backend/db/schema.sql` — the `CHECK (role IN (...))` constraint the allowlist mirrors
+- `frontend/src/components/AuthForm.jsx` — sends `expectedRole`, shows the server's refusal, redirects on the server's answer
+- `frontend/src/components/RoleChooser.jsx` — the three cards plus the cardless staff link
+- `frontend/src/utils/roles.js`, `frontend/src/pages/LoginPage.jsx` — the role each URL is scoped to, including `/login/staff`
+
+---
+
+**Flow (exam-level explanation):**
+
+**The problem.** The three cards on the login page — Customer, Rider,
+Restaurant owner — used to be decoration. A rider could click "Customer",
+type their own password, and land on the rider dashboard anyway, because
+the server never asked which card had been clicked. The cards promised a
+rule that nothing enforced.
+
+**The rule we must not break.** A user's role is *not* something the
+browser is allowed to tell the server. If the server believed a role sent
+in a request body, anyone could type `"role":"admin"` into the request and
+become an administrator. So the browser is allowed to send only a *claim*,
+and the claim can do exactly one thing: cause a rejection.
+
+The field is called `expectedRole` for that reason — "this is what I expect
+this account to be." It can never widen what someone may do, and it is
+never the value written into the token.
+
+**What happens, step by step, when someone logs in.**
+
+1. The visitor clicks a card, say Rider, and lands on `/login/rider`.
+2. They type an email and a password and press Log in.
+3. The browser sends three things: the email, the password, and
+   `expectedRole: "rider"`.
+4. The server checks the shape of the request first. If the email or
+   password is missing, it answers **400 Bad Request** — "you sent me
+   something malformed." If `expectedRole` is present but is not one of the
+   four role words the database accepts, that is also a **400**.
+5. The server looks the email up in the `users` table. If there is no such
+   row it answers **401 Unauthorized** with the deliberately vague message
+   "Invalid email or password." (401 means "I do not know who you are.")
+6. If the row exists, the server compares the typed password against the
+   stored **bcrypt hash** — bcrypt is a one-way password scrambler, so the
+   database holds the scramble and never the password itself. A mismatch is
+   the *same* generic 401 as step 5, so a stranger cannot learn whether an
+   email is registered.
+7. **Only now** does the server read `role` off the row it fetched and
+   compare it with `expectedRole`. If they disagree it answers **403
+   Forbidden** — "I know who you are, and you may not do this" — with a
+   message that names the mismatch: "This account is not registered as a
+   rider."
+8. If they agree (or no card was clicked at all), the server issues the
+   **JWT** — a signed slip of paper the browser hands back on every later
+   request — carrying the role it read *from the row*, never the one from
+   the request body.
+
+**Why step 7 comes after step 6, and not before.** Suppose the role check
+ran first. Then anyone could type someone else's email with a junk
+password: a 403 would mean "that email is a rider", a 401 would mean "that
+email is not a rider." Without knowing a single password, an attacker could
+map out every account on the platform. This is called **user enumeration**.
+Verifying the password first means the answer is identical — a flat 401 —
+to anyone who does not already know the password. The code carries a
+comment saying exactly this, so the ordering is not lost in a later edit.
+
+**Signup is the same idea pointed the other way.** The card decides which
+role is *created*, so the role does travel in the signup body — but the
+server never inserts that string. It first rejects `admin` outright with a
+**403** (admin accounts come from `npm run seed:admin`, never from the
+public internet), then looks the value up in a server-side list of the
+three self-service roles and inserts *its own copy*. The row can only ever
+hold a word this file approved.
+
+**The admin still gets in.** Admins have no card, so `/login/staff` renders
+the same form with no role attached. It sends no `expectedRole` at all, and
+the server behaves exactly as it always did: look up the row, check the
+password, issue a token for whatever role the row holds.
+
+**The frontend's two jobs.** First, it shows the 403 message verbatim, so
+the user reads "This account is not registered as a rider" instead of
+watching the form fail silently. Second, it sends the visitor to the
+dashboard matching the role the **server returned**, not the card they
+clicked. If the two ever disagreed, the server would win. And none of this
+is security by itself — hiding a button protects nothing. Every protected
+endpoint re-checks the role server-side out of the token on every request.
+
+**Key SQL used by this feature:**
+
+```sql
+SELECT * FROM users WHERE email=$1
+```
+
+The whole feature rests on this one read. It fetches the account by email
+using a **parameter** (`$1`) rather than pasting the typed email into the
+query text — that is what makes a typed-in quote mark a harmless character
+instead of SQL the database would run. Both the password hash and the
+authoritative `role` come out of this row, which is the point: the role
+used for the token is read from the database, not from the request.
+
+```sql
+INSERT INTO users (name, email, password, role, phone)
+VALUES ($1,$2,$3,$4,$5)
+RETURNING id, name, email, role
+```
+
+Signup's write. `$4` is bound to the copy of the role taken from the
+server's own allowlist, never to the raw request body, and the table's
+`CHECK (role IN ('customer','restaurant_owner','rider','admin'))`
+constraint is a second, database-level refusal of anything unexpected.
+`RETURNING` hands back the stored row so the token is built from what was
+actually saved.

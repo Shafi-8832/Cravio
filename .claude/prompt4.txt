@@ -1,0 +1,45 @@
+Add an admin login entry point. Small change — do not rewrite auth.
+
+Context: role-gated login is already implemented and working. The login
+route resolves the user's role from the users table and rejects a
+mismatched expectedRole with 403. Admin login already functions through
+a login request with NO expectedRole. This task is mostly UI plus
+hardening.
+
+=== WHAT TO ADD ===
+1. A small, unobtrusive "Staff login" text link at the bottom of the
+   auth page (below the three role cards). It routes to /admin/login.
+
+2. /admin/login renders the same login form, styled plainly, with no
+   role cards. It submits with expectedRole = 'admin'.
+   The server already handles this: it compares against the DB role and
+   returns 403 if the account is not an admin. Do not add any new
+   server logic for this — verify the existing route already covers it
+   and say so.
+
+3. On success, redirect to the admin dashboard route.
+
+=== HARDENING — verify, and fix only if missing ===
+4. There must be NO admin signup path anywhere. Confirm the public
+   signup route rejects role='admin' with 403, and that /admin/login
+   has no "create account" or "register" link of any kind.
+
+5. Confirm admin-only API endpoints check the role from the verified
+   token (which is sourced from the DB), not from any client-supplied
+   field. Report which middleware does this and where.
+
+6. Confirm an unauthenticated request to an admin endpoint returns 401,
+   and a request authenticated as a non-admin returns 403. If either
+   returns the wrong code, fix it. These exact codes are graded.
+
+=== DO NOT ===
+- Do not add a fourth role card to the main auth page.
+- Do not create a separate admin login API route — reuse the existing
+  login endpoint.
+- Do not change the users table or any migration.
+- Do not hardcode the admin email anywhere in the frontend.
+
+=== WHEN DONE ===
+Tell me:
+  - the file and line of the middleware that enforces admin-only access
+  - confirmation that signup blocks admin role creation, with line ref

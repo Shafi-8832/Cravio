@@ -1,0 +1,90 @@
+Fix role-gated login. Currently the three role cards (customer, rider,
+restaurant owner) on the auth page are cosmetic — any user can log in
+through any card and reach their own dashboard. This must be enforced.
+
+This is a GRADED requirement (role-based authorization, 401/403,
+server-side enforcement). Read carefully.
+
+=== THE SECURITY RULE — DO NOT GET THIS WRONG ===
+The course rubric states the user's role MUST NOT be sent by the client
+and trusted by the server. So:
+
+  WRONG: client sends role, server uses it to decide what the user is.
+  RIGHT: client sends expectedRole; server looks up the REAL role from
+         the users table; compares; rejects on mismatch.
+
+The role in the issued token/session MUST come from the database row,
+never from the request body. expectedRole is used ONLY to reject. It
+must never widen access, never be used to set the session role, and
+never be trusted if the DB disagrees.
+
+=== BACKEND ===
+1. Find the existing login route (likely backend/routes/auth.js).
+   Do not rewrite auth wholesale — make the minimal change.
+
+2. Accept an optional `expectedRole` field in the login request body.
+   - Validate it against an allowlist of known role values read from
+     the DB's role definition (or a constant matching the DB CHECK
+     constraint). Reject unknown values with 400.
+   - If expectedRole is absent, behave exactly as today (this keeps a
+     generic/admin login path working).
+
+3. Login order of operations — keep this exact order:
+   a. Validate input is present and well-formed → 400 if not
+   b. Look up user by email → if not found, return 401 with a GENERIC
+      message ("Invalid email or password")
+   c. Verify password with bcrypt.compare → if wrong, return 401 with
+      the SAME generic message
+   d. ONLY THEN, if expectedRole was supplied and does not match the
+      user's DB role → return 403 with a message naming the mismatch
+      (e.g. "This account is not registered as a customer.")
+   e. Issue the token using the role read from the database row
+
+   Step ordering matters: the role-mismatch check must come AFTER
+   password verification. Checking it before would let anyone probe
+   which role an email belongs to without knowing the password
+   (user enumeration). Add a short comment in the code saying this.
+
+4. Same treatment for SIGNUP: a signup through the rider card must
+   create a rider. The role written to the DB must come from a
+   server-side allowlist — never inserted raw from the request body.
+   Explicitly block 'admin' from ever being created via public signup;
+   return 403 if attempted.
+
+5. All SQL stays raw and parameterized ($1, $2). No ORM. No string
+   concatenation.
+
+=== FRONTEND ===
+6. The three role cards should set which role the login/signup form is
+   scoped to, and pass it as expectedRole. Keep the existing UI, just
+   wire it up.
+
+7. Show the server's 403 message in the UI — the user must SEE
+   "This account is not registered as a customer" rather than a silent
+   failure or a generic error. This is graded (error feedback).
+
+8. After successful login, redirect based on the role returned by the
+   SERVER in the response/token — not based on which card was clicked.
+   If these ever disagree, the server wins.
+
+9. Admin must still be able to log in. Admins have no card. Ensure a
+   login without expectedRole still works, and that an admin logging in
+   lands on the admin view.
+
+=== DO NOT ===
+- Do not add an admin signup path of any kind.
+- Do not store or trust role in localStorage for authorization decisions
+  (fine for display only; every protected endpoint must re-check
+  server-side).
+- Do not change the users table schema. role already exists.
+- Do not touch the migration files or any seed script.
+
+=== WHEN DONE ===
+Print a short summary of:
+  - which files changed
+  - the exact line where the role is read from the database
+  - the exact line where expectedRole is compared
+so I can point at them during my viva.
+
+
+

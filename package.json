@@ -13,9 +13,13 @@
     "lint": "npm --prefix frontend run lint",
     "test:backend": "node scripts/test-backend.js",
     "package:handoff": "python3 scripts/package-handoff.py",
-    "seed:real": "npm --prefix backend run seed:real"
+    "seed:real": "npm --prefix backend run seed:real",
+    "dev3": "./dev3.sh"
   },
   "dependencies": {
     "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }

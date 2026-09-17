@@ -1,0 +1,17 @@
+READ-ONLY. Do not modify anything.
+
+Search the backend source for every image-ish column the app reads or
+writes (image_url, photo, logo, banner, avatar, picture, thumbnail).
+Look in route handlers and any SQL strings.
+
+Report:
+1. Every image-related column name, and which table it belongs to.
+2. For each, how does the FRONTEND use it? Find the React components
+   that render these and show me whether the value is used directly as
+   an <img src>, or joined onto a base URL / static path first.
+3. Is there an express.static() call in the backend? If so, which
+   folder does it serve?
+4. Does the repo contain an uploads/ or public/images/ folder with
+   actual image files in it? How many files? Is it gitignored?
+
+This tells me whether images will survive a database migration.

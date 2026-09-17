@@ -7,6 +7,15 @@ import { ACCENTS, slugForRole } from '../utils/roles'
 import FoodImage from './FoodImage'
 import Icon from './Icon'
 
+// Each role's landing page, keyed by the role the server sends back after a
+// successful login. Anything unrecognised falls back to the customer home.
+const HOME_FOR_ROLE = {
+  admin: '/admin',
+  restaurant_owner: '/owner',
+  rider: '/rider',
+  customer: '/',
+}
+
 // One form, themed per role. The role is decided by the page the visitor
 // chose rather than by a dropdown inside the form: a customer signing up
 // should never have to notice that riders and owners exist.
@@ -24,13 +33,20 @@ export default function AuthForm({ role, signup = false }) {
     setBusy(true)
     setError('')
     try {
-      // role travels with the signup body, never with the login body — the
-      // server resolves a returning user's role from their row.
-      const response = await (signup
-        ? signUp({ ...form, role: role.key })
-        : signIn({ email: form.email, password: form.password }))
-      login(response.data.user, response.data.token)
-      navigate('/')
+      // The card the visitor picked travels as `expectedRole`. It is only a
+      // claim: the server reads the account's real role from the users
+      // table and rejects with 403 if the two disagree. It never decides
+      // what the account is.
+      // The staff screen is un-scoped: it sends no expectedRole at all, so an
+      // admin (who has no card) logs in exactly as before.
+      const credentials = { email: form.email, password: form.password }
+      if (!role.generic) credentials.expectedRole = role.key
+      const response = await (signup ? signUp({ ...form, role: role.key }) : signIn(credentials))
+      const signedInUser = response.data.user
+      login(signedInUser, response.data.token)
+      // Where we land follows the role the SERVER returned, not the card
+      // that was clicked — if they ever disagree, the server wins.
+      navigate(HOME_FOR_ROLE[signedInUser.role] || '/')
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -84,12 +100,13 @@ export default function AuthForm({ role, signup = false }) {
             </button>
           </form>
 
-          <p className="text-sm muted mt-6 text-center">
+          {/* No signup counterpart for the staff screen — admin accounts are seeded, not registered. */}
+          {!role.generic && <p className="text-sm muted mt-6 text-center">
             {signup ? 'Already have an account? ' : 'New to Cravio? '}
             <Link className={'font-bold ' + accent.text} to={`${signup ? '/login' : '/signup'}/${slug}`}>
               {signup ? `Log in as a ${role.label.toLowerCase()}` : `Create a ${role.label.toLowerCase()} account`}
             </Link>
-          </p>
+          </p>}
         </div>
       </section>
     </div>

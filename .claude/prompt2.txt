@@ -1,0 +1,20 @@
+my teammate has built the frontend almost fully
+but he inserted the images, restaurants, customer, rider accounts in his local db
+
+so I have pulled his code
+now obviously if I run my code, I won't be able to see the restaurants, or the users
+because my local db doesn't have it
+
+how do I have the exact same copy of his local db?
+or should I deploy now??
+
+how do I take his db data and deploy it all to Neon ?
+
+I deployed the db in Neon (the version with little frontend)
+
+the problem is he didn't deploy into Neon before he did the frontend part
+
+now we have a weird situation.
+
+how do we fix this??
+
