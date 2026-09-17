@@ -7,7 +7,7 @@ import { money, errorMessage } from '../utils/format'
 export default function MyOrdersPage() {
   const location = useLocation()
   const [orders, setOrders] = useState([])
-  const [expanded, setExpanded] = useState(location.state?.justPlacedOrderId || null)
+  const [expanded, setExpanded] = useState(location.state?.justPlacedOrderId || location.state?.openOrderId || null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)

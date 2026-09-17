@@ -1,0 +1,82 @@
+Make the profile page role-specific. Currently every role — customer,
+rider, restaurant owner, admin — sees the identical profile page. This
+is a GRADED requirement (role-aware interface, Section 3.4: "the
+interface must reflect the user's role").
+
+=== APPROACH ===
+1. Keep ONE route (/profile). Inside it, branch on the role that comes
+   from the SERVER (the verified token / session), never from
+   localStorage or a URL param. Render a different component per role.
+
+2. Create four components:
+     CustomerProfile, RiderProfile, OwnerProfile, AdminProfile
+   Do not duplicate shared pieces (name, email, change password) —
+   factor those into one shared block used by all four.
+
+=== WHAT EACH SHOWS ===
+First, inspect the existing schema and report which of these fields
+already exist. Build with what exists; list anything missing rather
+than inventing columns. Do NOT add columns in this task.
+
+CustomerProfile
+  - name, email, phone
+  - saved delivery addresses (list + add/edit/delete if the table exists)
+  - recent order history with status, linking to each order
+  - total orders placed and total spent (computed in SQL, see below)
+
+RiderProfile
+  - name, email, phone, vehicle type if stored
+  - availability toggle (online/offline) if a column exists — if not,
+    report it as missing, do not create it
+  - deliveries completed, average delivery time (SQL-computed)
+
+OwnerProfile
+  - name, email, phone
+  - the restaurant(s)/branch(es) they own
+  - quick counts: menu items, orders received, average rating
+  - link through to the menu editor / restaurant settings
+
+AdminProfile
+  - name, email
+  - platform totals: user count by role, restaurant count, order count
+  - links into admin tools
+  - keep it minimal, this is not the admin dashboard
+
+=== SQL RULES — THIS IS A DATABASE COURSE ===
+3. Every count, sum and average above must be computed IN SQL using
+   COUNT/SUM/AVG/GROUP BY with JOINs. Do NOT fetch rows and aggregate
+   in JavaScript with .reduce() or .filter().length. This is explicitly
+   graded and the evaluator checks for it.
+
+4. All queries raw and parameterized ($1, $2). No ORM, no string
+   concatenation.
+
+=== OWNERSHIP — ALSO GRADED ===
+5. Every profile endpoint must scope its data to the logged-in user's
+   own id, taken from the verified token — never from a query param or
+   request body. A customer must not be able to see another customer's
+   profile by changing an id.
+
+6. If any existing profile endpoint accepts a user id from the client,
+   fix it to use the token's id instead, and tell me where it was.
+
+7. An owner's stats must be scoped to restaurants they actually own —
+   join through the ownership relation, don't just filter by a
+   client-supplied restaurant id.
+
+=== ENDPOINTS ===
+8. Prefer one endpoint (GET /api/profile) that returns role-appropriate
+   data based on the token's role, OR separate per-role endpoints —
+   your choice, but each must enforce the role server-side and return
+   403 if the wrong role calls it.
+
+=== DO NOT ===
+- Do not change the database schema or add migrations.
+- Do not trust any role or user id sent by the client.
+- Do not spend effort on styling. Functional and plain is fine.
+
+=== WHEN DONE ===
+Report:
+  - the SQL for each aggregate query, so I can explain them in my viva
+  - which fields you found missing from the schema
+  - the line where the user id is taken from the token

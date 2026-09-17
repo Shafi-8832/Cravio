@@ -12,6 +12,7 @@ import CheckoutPage from './pages/CheckoutPage'
 import MyOrdersPage from './pages/MyOrdersPage'
 import AccountPage from './pages/AccountPage'
 import OwnerDashboardPage from './pages/OwnerDashboardPage'
+import OwnerAnalyticsPage from './pages/OwnerAnalyticsPage'
 import RiderDashboardPage from './pages/RiderDashboardPage'
 import AdminDashboardPage from './pages/AdminDashboardPage'
 
@@ -43,9 +44,12 @@ function AppRoutes() {
     <Route path="/signup" element={<PublicOnly><SignupPage /></PublicOnly>} />
     <Route path="/signup/:role" element={<PublicOnly><SignupPage /></PublicOnly>} />
     <Route path="/account" element={<RoleRoute><AccountPage /></RoleRoute>} />
+    {/* One profile route for every role; the page itself branches on the role the server returns. */}
+    <Route path="/profile" element={<RoleRoute><AccountPage /></RoleRoute>} />
     <Route path="/checkout" element={<RoleRoute roles={['customer']}><CheckoutPage /></RoleRoute>} />
     <Route path="/orders" element={<RoleRoute roles={['customer']}><MyOrdersPage /></RoleRoute>} />
     <Route path="/owner" element={<RoleRoute roles={['restaurant_owner']}><OwnerDashboardPage /></RoleRoute>} />
+    <Route path="/owner/analytics" element={<RoleRoute roles={['restaurant_owner']}><OwnerAnalyticsPage /></RoleRoute>} />
     <Route path="/rider" element={<RoleRoute roles={['rider']}><RiderDashboardPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminDashboardPage /></RoleRoute>} />
     <Route path="*" element={<Navigate to="/" replace />} />

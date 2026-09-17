@@ -27,6 +27,8 @@ export default function Navbar() {
           <NavLink to="/" end className={({ isActive }) => 'hidden sm:block ' + activeClass({ isActive })}>Explore</NavLink>
           {user?.role === 'customer' && <NavLink to="/orders" className={activeClass}>Orders</NavLink>}
           {roleLinks[user?.role] && <NavLink to={roleLinks[user.role][0]} className={activeClass}>{roleLinks[user.role][1]}</NavLink>}
+          {/* Owners get their analytics one click away, not buried in a tab. */}
+          {user?.role === 'restaurant_owner' && <NavLink to="/owner/analytics" className={activeClass}>Analytics</NavLink>}
           {user ? <>
             <Link to="/account" className="icon-button" aria-label="Your account" title={user.name}><Icon name="user" size={18} /></Link>
             <button onClick={handleLogout} className="hidden sm:flex icon-button" aria-label="Sign out" title="Sign out"><Icon name="logout" size={18} /></button>

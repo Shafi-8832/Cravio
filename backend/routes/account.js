@@ -1,4 +1,5 @@
 const express = require('express')
+const bcrypt = require('bcryptjs')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
@@ -26,6 +27,32 @@ router.patch('/profile', async (req, res) => {
   )
   res.json({ user: result.rows[0] })
 })
+
+// PATCH /api/account/password: any signed-in role. The account changed is
+// always the one in the token, so nobody can reset somebody else's password
+// by naming them. The current password must be proved first — a stolen,
+// still-open session should not be enough to lock the real owner out.
+router.patch('/password', async (req, res) => {
+  const currentPassword = typeof req.body.current_password === 'string' ? req.body.current_password : ''
+  const newPassword = typeof req.body.new_password === 'string' ? req.body.new_password : ''
+  if (!currentPassword || newPassword.length < 8 || Buffer.byteLength(newPassword, 'utf8') > 72) {
+    return res.status(400).json({ error: 'Enter your current password and a new one of at least 8 characters.' })
+  }
+  if (newPassword === currentPassword) {
+    return res.status(400).json({ error: 'Your new password must be different from the current one.' })
+  }
+
+  const result = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id])
+  if (!result.rowCount) return res.status(404).json({ error: 'Account not found.' })
+
+  const matches = await bcrypt.compare(currentPassword, result.rows[0].password)
+  if (!matches) return res.status(403).json({ error: 'Your current password is incorrect.' })
+
+  const hashed = await bcrypt.hash(newPassword, 10)
+  await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashed, req.user.id])
+  res.json({ message: 'Password updated. Your other devices stay signed in until their session expires.' })
+})
+
 
 router.use(requireRole('customer'))
 

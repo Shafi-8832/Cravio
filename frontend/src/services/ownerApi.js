@@ -60,3 +60,11 @@ export const getRestaurantOrders = (params = {}) => {
 export const updateOrderStatus = (orderId, status) => {
     return api.patch(`/api/orders/${orderId}/status`, { status })
 }
+
+
+// Analytics. The restaurant id is in the path, and the server re-checks
+// that it belongs to the caller before answering — the id being in the URL
+// is a request, not a permission.
+export const getAnalytics = (restaurantId, range = {}) => {
+    return api.get(`/api/owner/analytics/${restaurantId}`, { params: range })
+}

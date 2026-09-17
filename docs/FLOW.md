@@ -867,3 +867,449 @@ server's own allowlist, never to the raw request body, and the table's
 constraint is a second, database-level refusal of anything unexpected.
 `RETURNING` hands back the stored row so the token is built from what was
 actually saved.
+
+### The profile page, one route with four faces
+
+**Files involved:**
+
+- `backend/routes/profile.js` — the whole feature's server side: one dispatcher plus four builders
+- `backend/routes/account.js` — the shared editable details, and the new change-password endpoint
+- `backend/server.js` — mounts `/api/profile`
+- `frontend/src/services/profileApi.js` — `GET /api/profile`, `PATCH /api/account/password`
+- `frontend/src/pages/AccountPage.jsx` — the single page, served at `/account` and `/profile`
+- `frontend/src/components/profile/ProfileIdentity.jsx` — the block every role shares
+- `frontend/src/components/profile/CustomerProfile.jsx`, `RiderProfile.jsx`, `OwnerProfile.jsx`, `AdminProfile.jsx`
+
+---
+
+**Flow (exam-level explanation):**
+
+**The idea.** There is one profile page and one profile route. What it draws
+depends on *who is looking*: a diner sees addresses and past orders, a rider
+sees an availability switch and delivery times, an owner sees their
+restaurants and takings, an admin sees platform totals. Four different
+pages would have meant four places to forget a permission check.
+
+**Where "who is looking" comes from.** Not from the browser. Every request
+carries a **token** — a signed slip of paper handed out at login. The
+`authenticateToken` middleware (a piece of code that runs *before* the
+handler) checks the signature, then re-reads that user's row from the
+database and puts the result on `req.user`. So `req.user.id` and
+`req.user.role` are the database's answer. Nothing in `profile.js` ever
+reads a user id from the address bar or the request body — which is exactly
+why one customer cannot open another customer's profile by typing a
+different number. There is no number to type.
+
+**Step by step when someone opens the page.**
+
+1. The page calls `GET /api/profile`, sending no arguments at all.
+2. The middleware verifies the token and loads the account row.
+3. The handler fetches the shared details (name, email, phone, role,
+   join date) by id.
+4. It looks its role up in a small table of four builder functions and runs
+   the matching one, passing only the token's id.
+5. It returns `{ user, role, ...that role's data }`.
+6. React reads `profile.role` — the role the *server* sent — and renders
+   `CustomerProfile`, `RiderProfile`, `OwnerProfile` or `AdminProfile`. The
+   shared details block is rendered once, above whichever face was chosen,
+   so no role's file repeats it.
+
+**Why there are also four role-specific endpoints.** `/api/profile/customer`,
+`/rider`, `/owner` and `/admin` return the same four payloads, each behind
+`requireRole(...)`. A customer calling `/api/profile/admin` gets **403
+Forbidden** — "I know who you are, and you may not have this." The page does
+not use them; they exist so the enforcement is written down explicitly rather
+than merely implied by the dispatch table.
+
+**Changing your password.** `PATCH /api/account/password` takes the current
+password and a new one. It re-checks the current password with **bcrypt**
+(the one-way scrambler passwords are stored as) before writing, because
+someone who walked up to an unlocked laptop should not be able to lock the
+real owner out. The account updated is always the token's own.
+
+**Every number on the page is counted by the database.** Not one of them is
+produced by fetching rows and counting them in JavaScript. The queries follow.
+
+**Key SQL queries used in this feature:**
+
+```sql
+-- Customer: every headline number in one pass over their own orders.
+SELECT COUNT(*)::INTEGER AS total_orders,
+       COUNT(*) FILTER (WHERE status = 'delivered')::INTEGER AS delivered_orders,
+       COALESCE(SUM(total_amount) FILTER (WHERE status <> 'cancelled'), 0) AS total_spent,
+       COALESCE(AVG(total_amount) FILTER (WHERE status <> 'cancelled'), 0) AS average_order_value
+FROM orders WHERE customer_id = $1;
+```
+
+`FILTER` lets one scan answer several questions at once — count everything,
+but only add up the money for orders that were not cancelled. `COALESCE`
+turns the `NULL` a sum over zero rows produces into `0`, so a brand-new
+account shows "0" rather than a blank.
+
+```sql
+-- Customer: the five most recent orders, with where the food came from.
+SELECT o.id, o.status, o.total_amount, o.created_at,
+       r.name AS restaurant_name, b.area AS branch_area
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE o.customer_id = $1
+ORDER BY o.created_at DESC LIMIT 5;
+```
+
+An order records the *branch* it was placed at, not the restaurant, so the
+restaurant's name is two steps away: order → branch → restaurant. That is
+what the two `JOIN`s walk.
+
+```sql
+-- Rider: how many trips, and how long they take on average.
+SELECT COUNT(*)::INTEGER AS deliveries_assigned,
+       COUNT(*) FILTER (WHERE d.delivery_status = 'delivered')::INTEGER AS deliveries_completed,
+       ROUND(EXTRACT(EPOCH FROM AVG(d.delivery_time - o.created_at)
+         FILTER (WHERE d.delivery_status = 'delivered' AND d.delivery_time IS NOT NULL)) / 60
+       )::INTEGER AS average_delivery_minutes,
+       COALESCE(SUM(o.delivery_fee) FILTER (WHERE d.delivery_status = 'delivered'), 0) AS delivery_fees_earned
+FROM deliveries d JOIN orders o ON o.id = d.order_id
+WHERE d.rider_id = $1;
+```
+
+`deliveries` knows when the food arrived; `orders` knows when it was ordered.
+Subtracting two timestamps gives an **interval**; `AVG` averages those
+intervals; `EXTRACT(EPOCH ...)` converts the average into seconds and `/ 60`
+into minutes, because "1847 seconds" is not a thing to print on a page.
+
+```sql
+-- Owner: one row per owned restaurant, with its branch and menu counts.
+SELECT r.id, r.name, r.cuisine, r.avg_rating, r.review_count,
+       COUNT(DISTINCT b.id)::INTEGER AS branch_count,
+       COUNT(DISTINCT mi.id)::INTEGER AS menu_item_count
+FROM restaurants r
+LEFT JOIN restaurant_branches b ON b.restaurant_id = r.id
+LEFT JOIN menu_items mi ON mi.restaurant_id = r.id
+WHERE r.owner_id = $1
+GROUP BY r.id, r.name, r.cuisine, r.avg_rating, r.review_count
+ORDER BY r.name;
+```
+
+Joining two independent lists to one restaurant multiplies the rows: 10
+branches and 55 menu items make 550 combinations. `COUNT(DISTINCT ...)`
+counts each branch and each item once regardless. `LEFT JOIN` keeps a
+restaurant with no menu yet visible, showing zero instead of vanishing.
+
+```sql
+-- Owner: orders and revenue, reached only through the ownership chain.
+SELECT COUNT(o.id)::INTEGER AS orders_received,
+       COUNT(o.id) FILTER (WHERE o.status = 'delivered')::INTEGER AS orders_delivered,
+       COALESCE(SUM(o.total_amount) FILTER (WHERE o.status = 'delivered'), 0) AS revenue
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE r.owner_id = $1;
+```
+
+This is the ownership rule written as SQL. The filter is on `owner_id` —
+the logged-in user — and the joins are how an order is proved to belong to
+them. No restaurant id from the browser takes part, so there is nothing to
+tamper with. It is a separate query from the one above on purpose: adding
+orders as a third branch of that join would have multiplied the rows again
+and inflated the revenue.
+
+```sql
+-- Owner: one rating across every restaurant they run.
+SELECT ROUND(SUM(r.avg_rating * r.review_count) / NULLIF(SUM(r.review_count), 0), 2) AS average_rating,
+       COALESCE(SUM(r.review_count), 0)::INTEGER AS review_count
+FROM restaurants r WHERE r.owner_id = $1;
+```
+
+Averaging the averages would let a restaurant with 2 reviews count as much
+as one with 200, so each average is multiplied by its own review count
+before dividing by the total — a weighted average. `NULLIF(x, 0)` turns a
+zero divisor into `NULL`, which reads as "no rating yet" instead of crashing
+with a division by zero.
+
+```sql
+-- Admin: how many accounts of each kind.
+SELECT role, COUNT(*)::INTEGER AS count FROM users GROUP BY role ORDER BY role;
+```
+
+`GROUP BY role` collapses the whole users table into one row per role with
+its count — four rows out of however many thousand, and the counting happens
+in the database rather than by shipping every user to the browser.
+
+```sql
+-- Admin: the platform headline figures, in one trip.
+SELECT (SELECT COUNT(*) FROM users)::INTEGER AS user_count,
+       (SELECT COUNT(*) FROM restaurants)::INTEGER AS restaurant_count,
+       (SELECT COUNT(*) FROM restaurant_branches)::INTEGER AS branch_count,
+       (SELECT COUNT(*) FROM orders)::INTEGER AS order_count,
+       (SELECT COUNT(*) FROM orders WHERE status = 'delivered')::INTEGER AS delivered_order_count,
+       (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE status = 'delivered') AS delivered_revenue;
+```
+
+Each bracketed `SELECT` is its own aggregate returned as one column. They
+are bundled into a single statement so the page makes one round trip to the
+database instead of six.
+
+### Restaurant owner analytics dashboard
+
+**Files involved:**
+
+- `backend/routes/owner.js` — the five queries, the date-range validation and the ownership gate
+- `backend/server.js` — mounts `/api/owner`
+- `frontend/src/services/ownerApi.js` — `getAnalytics(restaurantId, { from, to })`
+- `frontend/src/components/OwnerAnalytics.jsx` — the tables and the date controls
+- `frontend/src/pages/OwnerAnalyticsPage.jsx` — the standalone page at `/owner/analytics`
+- `frontend/src/pages/OwnerDashboardPage.jsx` — the same component as an "Analytics" tab
+- `frontend/src/components/Navbar.jsx`, `frontend/src/App.jsx` — the owner's link and route
+
+---
+
+**Flow (exam-level explanation):**
+
+**What it is.** A page that answers five questions an owner actually asks:
+what did we take each day, what sells, how are we doing overall, when are we
+busy, and where did the orders end up. Every one of those numbers is
+calculated by PostgreSQL. Node runs the query and hands the rows to the
+browser; it never adds anything up itself.
+
+**The ownership problem, and how it is solved twice.**
+
+The restaurant's id is in the web address: `/api/owner/analytics/7`. Anyone
+can type a different number. So the id in the URL is treated as a *request*,
+not as permission.
+
+1. `authenticateToken` runs first. No token → **401 Unauthorized**.
+2. `requireRole('restaurant_owner')` runs next. A customer or rider with a
+   perfectly valid token → **403 Forbidden**.
+3. `requireOwnedRestaurant` then loads the restaurant by that id. No such
+   restaurant → **404 Not Found**. Restaurant exists but its `owner_id` is
+   not the id inside the token → **403 Forbidden**.
+4. And then *every one of the five queries independently repeats the
+   ownership test in its own `WHERE` clause* — `r.id = $1 AND r.owner_id = $2`
+   — so even if step 3 were deleted by accident, the queries would return
+   nothing rather than another owner's takings.
+
+The id compared against is `req.user.id`, which `authenticateToken` read
+from the database after checking the token's signature. It cannot be sent,
+edited or guessed by the caller.
+
+**The join that enforces it.** An order does not store a restaurant. It
+stores the *branch* it was placed at. So proving an order belongs to this
+owner takes two hops:
+
+```sql
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE r.id = $1 AND r.owner_id = $2
+```
+
+Read it as a sentence: "take the orders, find each one's branch, find that
+branch's restaurant, and keep only the rows where that restaurant is the one
+being asked about *and* is owned by the person asking." Every query in the
+file starts from that chain.
+
+**Dates.** `?from=&to=` are optional and default to the last 30 days. They
+are checked before use: the shape must be `YYYY-MM-DD`, the date must be a
+real day (`2026-02-31` is rejected — JavaScript would otherwise silently
+roll it into March), the start must not be after the end, and the window is
+capped at a year. Anything else is **400 Bad Request**. They are then passed
+as **parameters** (`$3`, `$4`), never pasted into the query text, so a date
+box containing SQL is just an invalid date.
+
+**How the page is laid out.** Top to bottom, the way a dashboard is read:
+the five headline figures with their period-over-period deltas, then the
+revenue trend, then top items, then busiest hours, then the status
+breakdown. Above them sit four range buttons — Today, 7 days, 30 days,
+Custom — which only set the `from`/`to` the endpoints already accept.
+Each row of the status breakdown is a button: clicking "cancelled" opens the
+owner's order list already filtered to cancelled orders, so the number and
+the orders behind it are one click apart.
+
+**Endpoints.** `GET /api/owner/analytics/:restaurantId` returns all five
+reports in one response — that is what the page calls. Each report also has
+its own address (`/revenue`, `/top-items`, `/headline`, `/busiest-hours`,
+`/status-breakdown`) behind the identical checks.
+
+**The empty state.** A restaurant that has never been ordered from returns
+zeros, not blanks: the aggregate queries still produce one row, `COALESCE`
+turns the empty sums into `0`, and the page says so in words instead of
+printing `NaN`.
+
+**The five queries:**
+
+```sql
+-- 1. Revenue over time: one row per day, including days that sold nothing.
+WITH owned_orders AS (
+  SELECT o.id, o.total_amount, o.created_at
+  FROM orders o
+  JOIN restaurant_branches b ON b.id = o.branch_id
+  JOIN restaurants r ON r.id = b.restaurant_id
+  WHERE r.id = $1 AND r.owner_id = $2
+    AND o.status <> 'cancelled'
+    AND o.created_at >= $3::date AND o.created_at < ($4::date + INTERVAL '1 day')
+)
+SELECT to_char(series.day, 'YYYY-MM-DD') AS day,
+       COUNT(oo.id)::INTEGER AS order_count,
+       COALESCE(SUM(oo.total_amount), 0) AS revenue
+FROM generate_series($3::date, $4::date, INTERVAL '1 day') AS series(day)
+LEFT JOIN owned_orders oo
+  ON oo.created_at >= series.day AND oo.created_at < series.day + INTERVAL '1 day'
+GROUP BY series.day ORDER BY series.day;
+```
+
+`WITH ... AS` names a temporary result — here, "this owner's orders in this
+window". `generate_series` manufactures the calendar, one row per day, and
+the orders are `LEFT JOIN`ed onto it so a day that sold nothing still appears
+with a zero instead of vanishing from the chart. Cancelled orders are
+excluded because they were never money.
+
+```sql
+-- 2. Top selling items: five bestsellers by quantity.
+SELECT mi.id, mi.name,
+       SUM(oi.quantity)::INTEGER AS quantity_sold,
+       SUM(oi.quantity * oi.unit_price) AS revenue,
+       COUNT(DISTINCT o.id)::INTEGER AS order_count
+FROM order_items oi
+JOIN orders o ON o.id = oi.order_id
+JOIN menu_items mi ON mi.id = oi.menu_item_id
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE r.id = $1 AND r.owner_id = $2 AND o.status <> 'cancelled'
+  AND o.created_at >= $3::date AND o.created_at < ($4::date + INTERVAL '1 day')
+GROUP BY mi.id, mi.name
+ORDER BY quantity_sold DESC, revenue DESC
+LIMIT 5;
+```
+
+Five tables at once: an order line (`order_items`) knows its dish and its
+order, the order knows its branch, the branch knows the restaurant, and the
+restaurant knows its owner. `GROUP BY` the dish and `SUM` the quantities, so
+one dish bought three at a time across four orders counts as twelve. Revenue
+uses `oi.unit_price` — the price *recorded on the line at the time* — so
+raising a menu price today does not rewrite last month's takings.
+
+```sql
+-- 3. Headline stats: current period AND the one before it, in one row.
+WITH bounds AS (
+  SELECT $3::date AS current_from,
+         $4::date AS current_to,
+         ($4::date - $3::date + 1) AS period_days,
+         ($3::date - ($4::date - $3::date + 1)) AS previous_from,
+         ($3::date - 1) AS previous_to
+),
+totals AS (
+  SELECT
+    COUNT(o.id) FILTER (WHERE o.created_at >= bounds.current_from)::INTEGER AS current_orders,
+    COUNT(o.id) FILTER (WHERE o.created_at >= bounds.current_from AND o.status = 'cancelled')::INTEGER
+      AS current_cancelled_orders,
+    COALESCE(SUM(o.total_amount) FILTER (
+      WHERE o.created_at >= bounds.current_from AND o.status <> 'cancelled'), 0) AS current_revenue,
+    AVG(o.total_amount) FILTER (
+      WHERE o.created_at >= bounds.current_from AND o.status <> 'cancelled') AS current_average_order_value,
+    COUNT(DISTINCT o.customer_id) FILTER (WHERE o.created_at >= bounds.current_from)::INTEGER
+      AS current_customers_served,
+    COUNT(o.id) FILTER (WHERE o.created_at < bounds.current_from)::INTEGER AS previous_orders,
+    COALESCE(SUM(o.total_amount) FILTER (
+      WHERE o.created_at < bounds.current_from AND o.status <> 'cancelled'), 0) AS previous_revenue,
+    AVG(o.total_amount) FILTER (
+      WHERE o.created_at < bounds.current_from AND o.status <> 'cancelled') AS previous_average_order_value,
+    COUNT(DISTINCT o.customer_id) FILTER (WHERE o.created_at < bounds.current_from)::INTEGER
+      AS previous_customers_served
+  FROM bounds
+  LEFT JOIN orders o
+    ON o.created_at >= bounds.previous_from
+   AND o.created_at < (bounds.current_to + INTERVAL '1 day')
+   AND o.branch_id IN (
+     SELECT b.id FROM restaurant_branches b
+     JOIN restaurants r ON r.id = b.restaurant_id
+     WHERE r.id = $1 AND r.owner_id = $2
+   )
+  GROUP BY bounds.current_from
+)
+SELECT totals.*,
+       bounds.period_days::INTEGER AS period_days,
+       to_char(bounds.previous_from, 'YYYY-MM-DD') AS previous_from,
+       to_char(bounds.previous_to, 'YYYY-MM-DD') AS previous_to,
+       ROUND((totals.current_revenue - totals.previous_revenue)
+             / NULLIF(totals.previous_revenue, 0) * 100, 1) AS revenue_change_pct,
+       ROUND((totals.current_orders - totals.previous_orders)::NUMERIC
+             / NULLIF(totals.previous_orders, 0) * 100, 1) AS orders_change_pct,
+       ROUND((COALESCE(totals.current_average_order_value, 0) - COALESCE(totals.previous_average_order_value, 0))
+             / NULLIF(totals.previous_average_order_value, 0) * 100, 1) AS average_order_value_change_pct,
+       (SELECT ROUND(AVG(rev.rating), 2)
+        FROM restaurant_reviews rev
+        JOIN orders o2 ON o2.id = rev.order_id
+        JOIN restaurant_branches b2 ON b2.id = o2.branch_id
+        WHERE b2.restaurant_id = $1) AS average_rating
+FROM totals, bounds;
+```
+
+Read it in three parts.
+
+**`bounds`** works out the two windows. A **CTE** — the `WITH name AS (...)`
+form — is just a named temporary result you can refer to further down. The
+current window is what the owner asked for. The previous one is the same
+*length*, ending the day before: subtracting two dates in Postgres gives a
+number of days, so `$4 - $3 + 1` is the period's length, and going that far
+back from the start lands exactly one period earlier. Ask for 1–30
+September and you are compared against 2–31 August, without the browser
+calculating a thing.
+
+**`totals`** does the counting. This is the part worth understanding: the
+`LEFT JOIN` fetches the *whole* span — previous start through current end —
+in one pass, and then each aggregate's `FILTER` decides which half it wants.
+`FILTER (WHERE o.created_at >= bounds.current_from)` is this period;
+`FILTER (WHERE o.created_at < bounds.current_from)` is the one before. Two
+windows, one scan, one row returned — rather than two round trips and a
+subtraction in JavaScript.
+
+The ownership proof sits in the join condition as `branch_id IN (...)`: only
+branches belonging to restaurant `$1` *owned by* `$2` qualify. It is written
+as a sub-select rather than another join so that the `LEFT JOIN` still
+produces its single row of zeros when a restaurant has no orders at all —
+which is what stops a brand-new restaurant rendering as a blank page.
+
+**The final `SELECT`** turns the six totals into three percentages, also in
+SQL. `NULLIF(previous, 0)` makes the divisor `NULL` when the previous period
+was empty, and anything divided by `NULL` is `NULL` — so instead of dividing
+by zero or claiming an infinite rise, the page simply says "no comparison".
+`COUNT(DISTINCT o.customer_id)` is "how many different people", so one
+regular who ordered twenty times counts once. The rating is a bracketed
+sub-select because a review hangs off an *order*, not a restaurant, so it is
+reached by its own chain: review → order → branch → restaurant, and it is a
+lifetime figure that ignores the date range.
+
+```sql
+-- 4. Busiest hours: which hour of the day sells most.
+SELECT EXTRACT(HOUR FROM o.created_at)::INTEGER AS hour,
+       COUNT(o.id)::INTEGER AS order_count,
+       COALESCE(SUM(o.total_amount), 0) AS revenue
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE r.id = $1 AND r.owner_id = $2 AND o.status <> 'cancelled'
+  AND o.created_at >= $3::date AND o.created_at < ($4::date + INTERVAL '1 day')
+GROUP BY hour ORDER BY hour;
+```
+
+`EXTRACT(HOUR FROM ...)` pulls just the hour number (0–23) out of a
+timestamp, throwing the date away. `GROUP BY` then collapses every order
+ever placed in that hour, on any day, into a single row — so "we are busiest
+at 8pm" is one query rather than a scan of every order in the browser.
+
+```sql
+-- 5. Order status breakdown.
+SELECT o.status, COUNT(o.id)::INTEGER AS order_count,
+       COALESCE(SUM(o.total_amount), 0) AS order_value
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+WHERE r.id = $1 AND r.owner_id = $2
+  AND o.created_at >= $3::date AND o.created_at < ($4::date + INTERVAL '1 day')
+GROUP BY o.status ORDER BY order_count DESC;
+```
+
+One row per status with its count and value. This is the one report that
+deliberately *keeps* cancelled orders, because "how many did we lose" is
+exactly what the breakdown is for.

@@ -1,0 +1,82 @@
+Build the ADMIN analytics dashboard — platform-wide.
+
+GRADED on two counts: complex queries (JOINs + aggregation) and
+role-based authorization. The course evaluator specifically requested a
+proper admin dashboard.
+
+=== THE CORE RULE ===
+Every number MUST be computed in SQL with COUNT / SUM / AVG / GROUP BY
+and JOINs across multiple tables. No aggregation in JavaScript — no
+.reduce(), no .filter().length. Node runs the query and passes the
+result through, nothing more.
+
+=== AUTHORIZATION — CRITICAL ===
+Unlike the owner dashboard there is no ownership scoping (an admin sees
+everything), so the ROLE CHECK is the only thing protecting this data.
+Every endpoint must:
+  - return 401 with no token or an invalid token
+  - return 403 for any authenticated non-admin (customer, rider, owner)
+  - read the role from the verified token, sourced from the users table
+Reuse the existing admin middleware rather than writing a new check.
+Tell me which middleware guards these routes.
+
+=== QUERIES TO BUILD (at least these six) ===
+Inspect the schema first and adapt to the column names that exist.
+
+1. Platform headline stats (single query, one row)
+   Total users, total restaurants, total orders, total revenue,
+   average order value. Include period-over-period comparison with
+   percent change, using aggregates with FILTER — same technique as
+   the owner dashboard.
+
+2. Orders and revenue over time
+   Daily totals for the selected range: date, order count, revenue.
+   GROUP BY date.
+
+3. Top restaurants by revenue
+   Top 10, with order count, total revenue and average rating.
+   Joins orders -> branches -> restaurants, plus the reviews
+   aggregate. GROUP BY restaurant, ORDER BY revenue DESC.
+
+4. Rider performance
+   Per rider: deliveries completed, average delivery time, and
+   on-time rate if the schema supports it. Joins deliveries -> orders
+   -> users. ORDER BY deliveries DESC.
+
+5. User growth and composition
+   New signups per day/week over the range, plus a COUNT of users
+   GROUP BY role.
+
+6. Order status breakdown
+   Count and percentage of orders per status across the platform.
+   Compute the percentage in SQL, not in JS.
+
+=== ENDPOINTS ===
+7. REST endpoints under /api/admin/analytics/... returning JSON.
+   Status codes: 200, 401, 403, 400 for bad date params.
+
+8. All SQL raw and parameterized ($1, $2). No ORM, no string
+   concatenation.
+
+9. Optional from/to date range params, validated, defaulting to the
+   last 30 days.
+
+=== FRONTEND ===
+10. An admin dashboard page reachable from the admin navigation, with
+    the same date range selector as the owner dashboard.
+    Order it: headline stats with deltas, then trend over time, then
+    top restaurants, then rider performance, then user growth, then
+    status breakdown.
+
+11. Plain and functional. No new dependencies without telling me first.
+    Tables of numbers are fine. Handle empty states without crashing.
+
+=== DO NOT ===
+- Do not change the database schema or add migrations.
+- Do not aggregate in JavaScript.
+- Do not create a second admin-check implementation — reuse the
+  existing one.
+
+=== WHEN DONE ===
+Print all six SQL queries in full, labelled, with one sentence each on
+what it does and which tables it joins. I need these for my viva.

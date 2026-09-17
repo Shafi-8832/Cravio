@@ -72,6 +72,8 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/payments', paymentRoutes)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/account', require('./routes/account'))
+app.use('/api/profile', require('./routes/profile'))
+app.use('/api/owner', require('./routes/owner'))
 app.use('/api/operations', require('./routes/operations'))
 app.use('/api/directory', require('./routes/directory'))
 

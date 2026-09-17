@@ -1,0 +1,77 @@
+Build the RESTAURANT OWNER analytics dashboard.
+
+This is a GRADED requirement on two counts: complex queries (3+ queries
+using JOINs and aggregation) and object-level ownership checks. The
+course evaluator specifically requested this dashboard.
+
+=== THE CORE RULE ===
+Every number on this dashboard MUST be computed in SQL using
+COUNT / SUM / AVG / GROUP BY with JOINs across multiple tables.
+Do NOT select rows and aggregate them in JavaScript. No .reduce(),
+no .filter().length, no summing in Node. This is a database course
+project and the evaluator checks specifically for this.
+
+Node's only job is to run the query and pass the result to the frontend.
+
+=== OWNERSHIP — GRADED, DO NOT SHORTCUT ===
+The owner's id comes from the verified token, never from the request.
+Every query must join through the ownership relation so an owner sees
+ONLY their own restaurant's data. An owner passing another owner's
+restaurant id must get 403, not someone else's numbers.
+Show me the exact JOIN that enforces this.
+
+=== QUERIES TO BUILD (at least these five) ===
+Inspect the schema first and adapt column names to what actually exists.
+
+1. Revenue over time
+   Daily revenue for the last 30 days: date, order count, total revenue.
+   Use GROUP BY on the date, SUM on the order total.
+   Exclude cancelled orders — check what status values exist first.
+
+2. Top selling menu items
+   Top 5 items by quantity sold, with revenue per item.
+   Joins order_items -> menu_items -> orders -> branches -> restaurants.
+   GROUP BY the item, ORDER BY quantity DESC, LIMIT 5.
+
+3. Headline stats (single query, one row)
+   Total orders, total revenue, average order value, average rating,
+   total customers served (COUNT DISTINCT on customer id).
+
+4. Busiest hours
+   Order count grouped by hour of day, using EXTRACT(HOUR FROM ...).
+   Shows when the restaurant is busiest.
+
+5. Order status breakdown
+   Count of orders per status. GROUP BY status.
+
+=== ENDPOINTS ===
+6. REST endpoints under /api/owner/analytics/... returning JSON.
+   Correct status codes: 200 ok, 401 no token, 403 wrong role or not
+   the owner of that restaurant, 404 restaurant not found.
+
+7. All SQL raw and parameterized ($1, $2). No ORM. No string
+   concatenation of user input.
+
+8. Support an optional date range (from/to) as query params. Validate
+   them — reject malformed dates with 400. Default to last 30 days.
+
+=== FRONTEND ===
+9. A dashboard page reachable from the owner's navigation.
+   Plain and functional — no marks for aesthetics.
+   Charts are optional; if you add any, use a library already in
+   package.json. Do not install new dependencies without telling me.
+   A clear table of numbers is perfectly acceptable.
+
+10. Show a sensible empty state when a restaurant has no orders yet,
+    rather than crashing or showing NaN.
+
+=== DO NOT ===
+- Do not change the database schema or add migrations.
+- Do not aggregate anything in JavaScript.
+- Do not let the client specify which restaurant's data to fetch
+  without an ownership check.
+
+=== WHEN DONE ===
+Print each of the five SQL queries in full, clearly labelled, so I can
+study them for my viva. For each, state in one sentence what it does
+and which tables it joins.

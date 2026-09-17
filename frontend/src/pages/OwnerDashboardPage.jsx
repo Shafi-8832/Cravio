@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import LoadingSpinner from '../components/LoadingSpinner'
 import BusinessSummary from '../components/BusinessSummary'
+import OwnerAnalytics from '../components/OwnerAnalytics'
 import RestaurantSettings from '../components/RestaurantSettings'
 import OwnerItemEditor from '../components/OwnerItemEditor'
 import OrderReceipt from '../components/OrderReceipt'
@@ -29,7 +31,10 @@ const ORDER_STATUS_COLORS = {
 }
 
 const OwnerDashboardPage = () => {
-  const [tab, setTab] = useState('menu')
+  // The analytics page can send someone here already pointed at a status,
+  // e.g. "show me the 3 cancelled orders behind that number".
+  const location = useLocation()
+  const [tab, setTab] = useState(location.state?.tab || 'menu')
   const [editingItem, setEditingItem] = useState(null)
   const [expandedOrder, setExpandedOrder] = useState(null)
 
@@ -56,7 +61,7 @@ const OwnerDashboardPage = () => {
   })
 
   const [orders, setOrders] = useState([])
-  const [orderStatusFilter, setOrderStatusFilter] = useState('')
+  const [orderStatusFilter, setOrderStatusFilter] = useState(location.state?.status || '')
   const [ordersLoading, setOrdersLoading] = useState(false)
 
   const selectedRestaurant = restaurants.find(r => r.id === selectedId) || null
@@ -271,7 +276,7 @@ const OwnerDashboardPage = () => {
 
       <div className="flex gap-2 mb-6 border-b border-gray-200">
         <button className="ml-auto btn-secondary" onClick={() => { loadRestaurants(); if (tab === 'orders') loadOrders() }}>Refresh</button>
-        {['menu', 'orders'].map(t => (
+        {['menu', 'orders', 'analytics'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -281,7 +286,7 @@ const OwnerDashboardPage = () => {
                 : 'border-transparent text-gray-400 hover:text-gray-600'
             }`}
           >
-            {t === 'menu' ? 'Restaurants & Menu' : 'Orders'}
+            {t === 'menu' ? 'Restaurants & Menu' : t === 'orders' ? 'Orders' : 'Analytics'}
           </button>
         ))}
       </div>
@@ -535,6 +540,15 @@ const OwnerDashboardPage = () => {
             </>
           )}
         </div>
+      )}
+
+      {tab === 'analytics' && (
+        <OwnerAnalytics
+          restaurantId={selectedId}
+          // Clicking a status in the breakdown opens the order list already
+          // filtered to it, so the number and the orders behind it are one click apart.
+          onStatusSelect={status => { setOrderStatusFilter(status); setTab('orders') }}
+        />
       )}
 
       {tab === 'orders' && (
