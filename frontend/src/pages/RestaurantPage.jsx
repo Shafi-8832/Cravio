@@ -101,7 +101,13 @@ export default function RestaurantPage() {
       </article>)}</div></section>
     })}
     {query && !menu.some(category => category.items.some(item => (item.name + ' ' + (item.description || '')).toLowerCase().includes(query.toLowerCase()))) && <p className="surface p-8 muted">No dishes match that search.</p>}
-    <section className="mt-10"><h2 className="section-heading mb-5">From the table</h2>{reviews.length ? <div className="grid md:grid-cols-2 gap-4">{reviews.map(review => <article className="surface p-5" key={review.id}><p className="font-bold">{'⭐'.repeat(review.rating)} <span className="text-sm muted">{review.customer_name}</span></p><p className="mt-3 text-sm">{review.comment || 'A rating from a delivered order.'}</p></article>)}</div> : <p className="muted text-sm">{restaurant.ordering_enabled ? 'Be the first to review after your order is delivered.' : 'No Cravio delivery reviews yet.'}</p>}</section>
+    <section className="mt-10"><h2 className="section-heading mb-5">From the table</h2>{reviews.length ? <div className="grid md:grid-cols-2 gap-4">{reviews.map(review => <article className="surface p-5" key={review.id}><p className="font-bold">{'⭐'.repeat(review.rating)} <span className="text-sm muted">{review.customer_name}</span></p><p className="mt-3 text-sm">{review.comment || 'A rating from a delivered order.'}</p>
+      {/* The owner's answer sits under the review it answers, clearly labelled
+          so nobody mistakes the restaurant's words for the diner's. */}
+      {review.owner_reply && <div className="mt-4 pl-4 border-l-2 border-orange-300">
+        <p className="text-xs font-bold text-orange-700">Reply from {restaurant.name}{review.owner_replied_at && <span className="muted font-normal"> · {new Date(review.owner_replied_at).toLocaleDateString()}</span>}</p>
+        <p className="text-sm mt-1">{review.owner_reply}</p>
+      </div>}</article>)}</div> : <p className="muted text-sm">{restaurant.ordering_enabled ? 'Be the first to review after your order is delivered.' : 'No Cravio delivery reviews yet.'}</p>}</section>
     {user?.role === 'customer' && itemCount > 0 && <div className="fixed bottom-5 inset-x-5 z-20 max-w-md mx-auto"><Link to="/checkout" className="btn-primary w-full shadow-xl !py-4"><span>🛍️ {itemCount} items · View checkout</span><span className="ml-auto">{money(cartTotal)}</span></Link></div>}
     {picker && <ModifierPicker item={picker} onCancel={() => setPicker(null)} onConfirm={ids => add(picker, ids)} />}
   </main>

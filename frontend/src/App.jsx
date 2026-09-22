@@ -13,8 +13,10 @@ import MyOrdersPage from './pages/MyOrdersPage'
 import AccountPage from './pages/AccountPage'
 import OwnerDashboardPage from './pages/OwnerDashboardPage'
 import OwnerAnalyticsPage from './pages/OwnerAnalyticsPage'
+import OwnerReviewsPage from './pages/OwnerReviewsPage'
 import RiderDashboardPage from './pages/RiderDashboardPage'
 import AdminDashboardPage from './pages/AdminDashboardPage'
+import AdminAnalyticsPage from './pages/AdminAnalyticsPage'
 
 function RoleRoute({ roles, children }) {
   const { user } = useAuth()
@@ -50,8 +52,10 @@ function AppRoutes() {
     <Route path="/orders" element={<RoleRoute roles={['customer']}><MyOrdersPage /></RoleRoute>} />
     <Route path="/owner" element={<RoleRoute roles={['restaurant_owner']}><OwnerDashboardPage /></RoleRoute>} />
     <Route path="/owner/analytics" element={<RoleRoute roles={['restaurant_owner']}><OwnerAnalyticsPage /></RoleRoute>} />
+    <Route path="/owner/reviews" element={<RoleRoute roles={['restaurant_owner']}><OwnerReviewsPage /></RoleRoute>} />
     <Route path="/rider" element={<RoleRoute roles={['rider']}><RiderDashboardPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminDashboardPage /></RoleRoute>} />
+    <Route path="/admin/analytics" element={<RoleRoute roles={['admin']}><AdminAnalyticsPage /></RoleRoute>} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes><Footer /></>
 }

@@ -1313,3 +1313,351 @@ GROUP BY o.status ORDER BY order_count DESC;
 One row per status with its count and value. This is the one report that
 deliberately *keeps* cancelled orders, because "how many did we lose" is
 exactly what the breakdown is for.
+
+### Admin analytics dashboard — the whole platform
+
+**Files involved:**
+
+- `backend/routes/adminAnalytics.js` — the six queries and the role gate
+- `backend/middleware/auth.js`, `backend/middleware/roleCheck.js` — the guards (reused, not re-written)
+- `backend/utils/dateRange.js` — the shared date validation, now used by both analytics dashboards
+- `backend/server.js` — mounts `/api/admin/analytics`
+- `frontend/src/services/adminApi.js` — `getPlatformAnalytics({ from, to })`
+- `frontend/src/pages/AdminAnalyticsPage.jsx` — the page at `/admin/analytics`
+- `frontend/src/components/DateRangePicker.jsx`, `frontend/src/utils/dateRange.js` — the range selector shared with the owner dashboard
+- `frontend/src/components/Navbar.jsx`, `frontend/src/pages/AdminDashboardPage.jsx`, `frontend/src/App.jsx` — the link and the route
+
+---
+
+**Flow (exam-level explanation):**
+
+**What makes this one different from the owner's.** The owner dashboard has
+two defences: the role check, and the fact that every query is filtered to
+restaurants they own. An admin is *supposed* to see everything, so there is
+no ownership filter to fall back on. **The role check is the entire
+defence.** That makes it worth stating exactly what guards these routes:
+
+1. `authenticateToken` — checks the token's signature, then re-reads that
+   user's row from the `users` table. So `req.user.role` is what the
+   database says, not what the token claims. A missing, malformed, expired
+   or revoked token, or a suspended account, never gets past it: **401**.
+   Editing the role inside a token does not help either — changing the
+   payload breaks the signature, and the request is rejected before any
+   query runs.
+2. `requireRole('admin')` — any authenticated non-admin, customer, rider or
+   restaurant owner alike, is refused: **403**.
+
+Both are the middleware already used across the project. They are applied
+once with `router.use(...)` at the top of the file, so a new endpoint added
+below is guarded by default rather than by remembering to guard it.
+
+**Dates** are optional `?from=` and `?to=`, defaulting to the last 30 days,
+validated by the same shared helper the owner dashboard uses — right shape,
+a real calendar day, start not after end, at most a year — and rejected with
+**400** otherwise. They are passed as parameters (`$1`, `$2`), never pasted
+into the SQL text.
+
+**The page** is ordered the way a dashboard is read: headline figures with
+their period-over-period deltas, then the trend over time, then top
+restaurants, then rider performance, then user growth and composition, then
+the status breakdown.
+
+**The six queries:**
+
+```sql
+-- 1. Platform headline: this period against the one before it, in one row.
+WITH bounds AS (
+  SELECT $1::date AS current_from, $2::date AS current_to,
+         ($2::date - $1::date + 1) AS period_days,
+         ($1::date - ($2::date - $1::date + 1)) AS previous_from,
+         ($1::date - 1) AS previous_to
+),
+order_totals AS (
+  SELECT
+    COUNT(o.id) FILTER (WHERE o.created_at >= bounds.current_from)::INTEGER AS current_orders,
+    COUNT(o.id) FILTER (WHERE o.created_at <  bounds.current_from)::INTEGER AS previous_orders,
+    COALESCE(SUM(o.total_amount) FILTER (
+      WHERE o.created_at >= bounds.current_from AND o.status <> 'cancelled'), 0) AS current_revenue,
+    COALESCE(SUM(o.total_amount) FILTER (
+      WHERE o.created_at <  bounds.current_from AND o.status <> 'cancelled'), 0) AS previous_revenue,
+    AVG(o.total_amount) FILTER (
+      WHERE o.created_at >= bounds.current_from AND o.status <> 'cancelled') AS current_average_order_value,
+    AVG(o.total_amount) FILTER (
+      WHERE o.created_at <  bounds.current_from AND o.status <> 'cancelled') AS previous_average_order_value
+  FROM bounds
+  LEFT JOIN orders o ON o.created_at >= bounds.previous_from
+                    AND o.created_at <  (bounds.current_to + INTERVAL '1 day')
+  GROUP BY bounds.current_from
+),
+user_totals AS (
+  SELECT COUNT(u.id) FILTER (WHERE u.created_at >= bounds.current_from)::INTEGER AS current_signups,
+         COUNT(u.id) FILTER (WHERE u.created_at <  bounds.current_from)::INTEGER AS previous_signups
+  FROM bounds
+  LEFT JOIN users u ON u.created_at >= bounds.previous_from
+                   AND u.created_at <  (bounds.current_to + INTERVAL '1 day')
+  GROUP BY bounds.current_from
+)
+SELECT (SELECT COUNT(*) FROM users)::INTEGER AS total_users,
+       (SELECT COUNT(*) FROM restaurants)::INTEGER AS total_restaurants,
+       order_totals.*, user_totals.*,
+       ROUND((order_totals.current_revenue - order_totals.previous_revenue)
+             / NULLIF(order_totals.previous_revenue, 0) * 100, 1) AS revenue_change_pct
+FROM order_totals, user_totals, bounds;
+```
+
+Counts the current window and the one before it in a single pass: the join
+fetches the whole span, and each aggregate's `FILTER` claims its half.
+Orders and users are counted in separate blocks because they are unrelated
+tables — joining them would multiply rows and invent numbers. Tables:
+`orders`, `users`, `restaurants`.
+
+```sql
+-- 2. Orders and revenue over time.
+SELECT to_char(series.day, 'YYYY-MM-DD') AS day,
+       COUNT(o.id)::INTEGER AS order_count,
+       COUNT(o.id) FILTER (WHERE o.status = 'cancelled')::INTEGER AS cancelled_count,
+       COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'cancelled'), 0) AS revenue,
+       COUNT(DISTINCT o.customer_id)::INTEGER AS customers
+FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS series(day)
+LEFT JOIN orders o ON o.created_at >= series.day
+                  AND o.created_at <  series.day + INTERVAL '1 day'
+GROUP BY series.day ORDER BY series.day;
+```
+
+Daily platform totals. `generate_series` manufactures the calendar and the
+orders are `LEFT JOIN`ed onto it, so a quiet day appears as a zero instead
+of dropping out and making the trend look shorter than it is. Tables:
+`orders`, plus the generated series.
+
+```sql
+-- 3. Top restaurants by revenue.
+SELECT r.id, r.name, u.name AS owner_name,
+       COUNT(o.id)::INTEGER AS order_count,
+       COALESCE(SUM(o.total_amount) FILTER (WHERE o.status <> 'cancelled'), 0) AS revenue,
+       COUNT(DISTINCT o.customer_id)::INTEGER AS customers,
+       (SELECT ROUND(AVG(rev.rating), 2)
+        FROM restaurant_reviews rev
+        JOIN orders o2 ON o2.id = rev.order_id
+        JOIN restaurant_branches b2 ON b2.id = o2.branch_id
+        WHERE b2.restaurant_id = r.id) AS average_rating
+FROM orders o
+JOIN restaurant_branches b ON b.id = o.branch_id
+JOIN restaurants r ON r.id = b.restaurant_id
+LEFT JOIN users u ON u.id = r.owner_id
+WHERE o.created_at >= $1::date AND o.created_at < ($2::date + INTERVAL '1 day')
+GROUP BY r.id, r.name, u.name
+ORDER BY revenue DESC, order_count DESC LIMIT 10;
+```
+
+The ten highest-earning restaurants. An order stores its *branch*, so the
+money is gathered by walking order → branch → restaurant, with one more hop
+into `users` for the owner's name. The rating is a bracketed sub-select
+rather than a fifth join: a review hangs off an order, so joining reviews
+here too would multiply the order rows and inflate the revenue. Tables:
+`orders`, `restaurant_branches`, `restaurants`, `users`, `restaurant_reviews`.
+
+```sql
+-- 4. Rider performance, including on-time rate.
+SELECT u.id AS rider_id, u.name AS rider_name,
+       COUNT(d.id)::INTEGER AS deliveries_assigned,
+       COUNT(d.id) FILTER (WHERE d.delivery_status = 'delivered')::INTEGER AS deliveries_completed,
+       ROUND(EXTRACT(EPOCH FROM AVG(d.delivery_time - o.created_at)
+         FILTER (WHERE d.delivery_status = 'delivered' AND d.delivery_time IS NOT NULL)) / 60
+       )::INTEGER AS average_delivery_minutes,
+       ROUND(100.0 * COUNT(d.id) FILTER (
+         WHERE d.delivery_status = 'delivered' AND d.delivery_time IS NOT NULL
+           AND d.delivery_time <= o.created_at + make_interval(mins => b.eta_max)
+       ) / NULLIF(COUNT(d.id) FILTER (WHERE d.delivery_status = 'delivered'), 0), 1) AS on_time_rate_pct
+FROM deliveries d
+JOIN orders o ON o.id = d.order_id
+JOIN users u ON u.id = d.rider_id
+JOIN restaurant_branches b ON b.id = o.branch_id
+WHERE o.created_at >= $1::date AND o.created_at < ($2::date + INTERVAL '1 day')
+GROUP BY u.id, u.name
+ORDER BY deliveries_completed DESC, average_delivery_minutes ASC LIMIT 20;
+```
+
+One row per rider. `deliveries` holds the rider's side of an order, `orders`
+holds when it was placed, `users` gives the rider a name, and
+`restaurant_branches` carries `eta_max` — the outer end of the delivery
+window the customer was promised. "On time" is therefore answerable from the
+schema as it stands: the food arrived no later than the order time plus that
+branch's `eta_max` minutes, `make_interval` turning the stored number of
+minutes into something addable to a timestamp. Subtracting two timestamps
+gives an interval; `EXTRACT(EPOCH ...) / 60` turns the average into minutes.
+Tables: `deliveries`, `orders`, `users`, `restaurant_branches`.
+
+```sql
+-- 5a. New accounts per day.
+SELECT to_char(series.day, 'YYYY-MM-DD') AS day,
+       COUNT(u.id)::INTEGER AS signups,
+       COUNT(u.id) FILTER (WHERE u.role = 'customer')::INTEGER AS customers,
+       COUNT(u.id) FILTER (WHERE u.role = 'rider')::INTEGER AS riders,
+       COUNT(u.id) FILTER (WHERE u.role = 'restaurant_owner')::INTEGER AS restaurant_owners
+FROM generate_series($1::date, $2::date, INTERVAL '1 day') AS series(day)
+LEFT JOIN users u ON u.created_at >= series.day
+                 AND u.created_at <  series.day + INTERVAL '1 day'
+GROUP BY series.day ORDER BY series.day;
+
+-- 5b. Composition of the whole platform.
+SELECT u.role, COUNT(*)::INTEGER AS user_count,
+       COUNT(*) FILTER (WHERE u.is_active)::INTEGER AS active_count,
+       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS share_pct
+FROM users u GROUP BY u.role ORDER BY user_count DESC;
+```
+
+The first is signups per day, split by role with `FILTER` so one row carries
+that day's whole composition instead of one row per day per role. The second
+is the standing make-up of the platform; its share column is explained
+below. Tables: `users`, plus the generated series.
+
+```sql
+-- 6. Order status breakdown, percentages computed in SQL.
+SELECT o.status, COUNT(*)::INTEGER AS order_count,
+       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS percentage,
+       COALESCE(SUM(o.total_amount), 0) AS order_value
+FROM orders o
+WHERE o.created_at >= $1::date AND o.created_at < ($2::date + INTERVAL '1 day')
+GROUP BY o.status ORDER BY order_count DESC;
+```
+
+One row per status with its share of all orders. The share uses a **window
+function**: `COUNT(*)` is this status's own count, and `SUM(COUNT(*)) OVER ()`
+adds those counts up across every row the `GROUP BY` produced — the grand
+total — so each row can be expressed as a percentage of the whole without a
+second query or any arithmetic in JavaScript. The `100.0` rather than `100`
+forces decimal division; with integers, Postgres would floor every share to
+a whole number. Table: `orders`.
+
+### Owner review replies
+
+**Files involved:**
+
+- `backend/db/migrations/006_review_replies.sql` — the two new columns and their length CHECK
+- `backend/db/functions/restaurant_rating.sql` — the rating trigger, now narrowed
+- `backend/routes/owner.js` — list, summary, reply, remove reply
+- `backend/routes/reviews.js` — the public list now carries the reply
+- `frontend/src/pages/OwnerReviewsPage.jsx` — the owner's review inbox at `/owner/reviews`
+- `frontend/src/services/ownerApi.js`, `frontend/src/pages/RestaurantPage.jsx` — the calls, and the reply shown under each public review
+
+---
+
+**Flow (exam-level explanation):**
+
+**What was added.** A review is the customer's word about a meal. An owner
+should be able to answer it in public — "sorry about that, the rider was
+held up" — but must never be able to change or remove what the customer
+actually wrote. So the reply lives in two new columns on the review row,
+`owner_reply` and `owner_replied_at`, and **the only columns any owner
+route writes are those two**. There is no route anywhere in the project
+that updates a review's rating or comment, and none that deletes a review.
+
+**The trigger had to be narrowed, and this is the interesting part.**
+`trg_sync_restaurant_rating` recomputes a restaurant's stored average
+whenever a review changes. It was attached to plain `UPDATE`, meaning *any*
+change to a review row fired it. Writing a reply is an `UPDATE` of that row
+— so every reply was making the database recompute an average that could
+not possibly have changed. The fix is to tell the trigger which columns it
+cares about:
+
+```sql
+DROP TRIGGER IF EXISTS trg_sync_restaurant_rating ON restaurant_reviews;
+
+CREATE TRIGGER trg_sync_restaurant_rating
+    AFTER INSERT OR UPDATE OF rating, order_id OR DELETE
+    ON restaurant_reviews
+    FOR EACH ROW
+    EXECUTE FUNCTION sync_restaurant_rating();
+```
+
+`UPDATE OF rating, order_id` means "fire on an update **only** if one of
+those two columns was in the SET list". `rating` is the obvious one.
+`order_id` matters because re-pointing a review at a different order moves
+it to a different restaurant, and both the old and the new restaurant then
+need recomputing. A reply touches neither, so the trigger stays asleep.
+
+**How the ownership check is written, and why it is inside the UPDATE.**
+
+```sql
+UPDATE restaurant_reviews rv
+SET owner_reply = $1,
+    owner_replied_at = NOW()
+FROM orders o, restaurant_branches b, restaurants r
+WHERE rv.id = $2
+  AND o.id = rv.order_id
+  AND b.id = o.branch_id
+  AND r.id = b.restaurant_id
+  AND r.owner_id = $3
+RETURNING rv.id;
+```
+
+The extra tables in the `FROM` list are a join: the row is only updated if
+the chain review → order → branch → restaurant can be walked *and* that
+restaurant's `owner_id` is `$3`, the id from the verified token. A review
+belonging to somebody else matches nothing, so nothing is written, and
+`rowCount` is 0 → **404**.
+
+Why not check ownership first and then update? Two reasons.
+
+1. **The gap.** Between a `SELECT` that says "yes, you own this" and a
+   later `UPDATE`, the world can change — the restaurant could be
+   transferred, the order re-pointed. One statement has no gap inside it;
+   the check and the write are the same act.
+2. **One definition.** A separate check is a second place that has to agree
+   about what ownership means. Two copies of a rule are two chances to
+   write it differently, and the one that drifts is the one nobody tests.
+   A statement cannot disagree with itself.
+
+The statement is still wrapped in an explicit `BEGIN` / `COMMIT`, with
+`ROLLBACK` in the catch, because the course requires explicit transaction
+control on every DML operation — even one this small.
+
+**The 404 is deliberate.** An owner asking about somebody else's review gets
+"Review not found", exactly what they would get for a review that does not
+exist. A 403 would confirm the id is real, which is enough to let someone
+walk the numbers and map out the table.
+
+**The star distribution, in one query.**
+
+```sql
+SELECT stars.rating::INTEGER AS rating,
+       COUNT(rev.id)::INTEGER AS review_count,
+       ROUND(100.0 * COUNT(rev.id) / NULLIF(SUM(COUNT(rev.id)) OVER (), 0), 1) AS share_pct
+FROM generate_series(1, 5) AS stars(rating)
+LEFT JOIN (
+  SELECT rev.id, rev.rating
+  FROM restaurant_reviews rev
+  JOIN orders o ON o.id = rev.order_id
+  JOIN restaurant_branches b ON b.id = o.branch_id
+  JOIN restaurants r ON r.id = b.restaurant_id
+  WHERE r.owner_id = $1
+) rev ON rev.rating = stars.rating
+GROUP BY stars.rating
+ORDER BY stars.rating DESC;
+```
+
+`generate_series(1, 5)` manufactures the five star levels and the owner's
+reviews are `LEFT JOIN`ed onto them, so a star nobody has ever given still
+comes back as a zero — without it a distribution with a gap would render as
+a shorter scale and look wrong. The share is a **window function**:
+`COUNT(rev.id)` is this star's own count and `SUM(COUNT(rev.id)) OVER ()`
+adds the five counts into the grand total, so each row is a percentage of
+the whole without a second query. `NULLIF(..., 0)` keeps an owner with no
+reviews at all from dividing by zero.
+
+**The list query and its filters.** The same four-table chain, filtered on
+`owner_id`. Two details:
+
+- The filters are optional, so each condition switches itself off when its
+  parameter is NULL: `AND ($2::INTEGER IS NULL OR rev.rating = $2)`. That
+  keeps one fixed SQL string instead of clauses glued together at runtime.
+- `sort` **cannot** be a parameter — `ORDER BY` takes column names, not
+  values — so it is used as a *key* into a fixed table of four allowed
+  orderings. A value that is not one of those four is rejected with a 400
+  and never reaches the database. This is the one place user input decides
+  SQL text, and it does so only by choosing between strings written here.
+
+**Only the first name is returned.** `split_part(u.name, ' ', 1)` takes
+everything before the first space. A review is public feedback, not an
+introduction — the owner has no business being handed the customer's full
+name, and email and phone are never selected at all.

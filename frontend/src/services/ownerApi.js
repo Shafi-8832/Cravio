@@ -68,3 +68,26 @@ export const updateOrderStatus = (orderId, status) => {
 export const getAnalytics = (restaurantId, range = {}) => {
     return api.get(`/api/owner/analytics/${restaurantId}`, { params: range })
 }
+
+
+// Reviews of this owner's restaurants, and their replies. No restaurant id
+// travels with these: the server resolves the owner from the token and
+// returns only what belongs to them.
+export const getOwnerReviews = (params = {}) => {
+    return api.get('/api/owner/reviews', { params })
+}
+
+
+export const getOwnerReviewSummary = () => {
+    return api.get('/api/owner/reviews/summary')
+}
+
+
+export const replyToReview = (reviewId, reply) => {
+    return api.put(`/api/owner/reviews/${reviewId}/reply`, { reply })
+}
+
+
+export const deleteReviewReply = (reviewId) => {
+    return api.delete(`/api/owner/reviews/${reviewId}/reply`)
+}

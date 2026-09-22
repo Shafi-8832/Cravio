@@ -199,12 +199,17 @@ $$ LANGUAGE plpgsql;
 -- API today (routes/reviews.js), but a rating that silently stops being
 -- correct the moment someone edits or removes a row in psql is not a
 -- guarantee worth relying on.
+--
+-- UPDATE OF rating, order_id — not a bare UPDATE — because an owner
+-- replying to a review updates the same row without changing what the
+-- rating is, and recomputing the restaurant's average for that would be
+-- work that cannot change the answer.
 -- ------------------------------------------------------------
 
 DROP TRIGGER IF EXISTS trg_sync_restaurant_rating ON restaurant_reviews;
 
 CREATE TRIGGER trg_sync_restaurant_rating
-    AFTER INSERT OR UPDATE OR DELETE
+    AFTER INSERT OR UPDATE OF rating, order_id OR DELETE
     ON restaurant_reviews
     FOR EACH ROW
     EXECUTE FUNCTION sync_restaurant_rating();

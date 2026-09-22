@@ -15,7 +15,7 @@ export default function OwnerProfile({ restaurants, stats }) {
         <Stat label="Delivered" value={stats.orders_delivered} />
         <Stat label="Revenue" value={money(stats.revenue)} hint="Delivered orders only" />
         <Stat label="Rating" value={stats.average_rating == null ? 'No reviews' : `${Number(stats.average_rating).toFixed(2)} ★`}
-          hint={`${stats.review_count} review${stats.review_count === 1 ? '' : 's'}`} />
+          hint={<Link className="font-bold text-orange-700" to="/owner/reviews">{stats.review_count} review{stats.review_count === 1 ? '' : 's'} →</Link>} />
       </StatGrid>
     </section>
 

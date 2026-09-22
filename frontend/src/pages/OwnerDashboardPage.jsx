@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import LoadingSpinner from '../components/LoadingSpinner'
 import BusinessSummary from '../components/BusinessSummary'
 import OwnerAnalytics from '../components/OwnerAnalytics'
@@ -275,7 +275,8 @@ const OwnerDashboardPage = () => {
       )}
 
       <div className="flex gap-2 mb-6 border-b border-gray-200">
-        <button className="ml-auto btn-secondary" onClick={() => { loadRestaurants(); if (tab === 'orders') loadOrders() }}>Refresh</button>
+        <Link className="ml-auto btn-secondary" to="/owner/reviews">⭐ Reviews</Link>
+        <button className="btn-secondary" onClick={() => { loadRestaurants(); if (tab === 'orders') loadOrders() }}>Refresh</button>
         {['menu', 'orders', 'analytics'].map(t => (
           <button
             key={t}

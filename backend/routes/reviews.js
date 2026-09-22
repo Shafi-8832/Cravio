@@ -256,6 +256,11 @@ router.get(
             rev.portion_accuracy,
             rev.comment,
             rev.created_at,
+            -- The owner's reply travels with the review it answers, so the
+            -- page can show the two together rather than fetching replies
+            -- separately and trying to line them up.
+            rev.owner_reply,
+            rev.owner_replied_at,
             u.name AS customer_name
           FROM restaurant_reviews rev
           JOIN orders o

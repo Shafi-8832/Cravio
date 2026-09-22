@@ -14,3 +14,10 @@ export const updateUserStatus = (userId, isActive) => {
 export const getStats = () => {
     return api.get('/api/admin/stats')
 }
+
+
+// Platform-wide analytics. Admin only — the server checks the role on the
+// verified token, so this is a request the API is free to refuse.
+export const getPlatformAnalytics = (range = {}) => {
+    return api.get('/api/admin/analytics', { params: range })
+}

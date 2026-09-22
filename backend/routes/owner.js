@@ -3,55 +3,13 @@ const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
 const { parseId } = require('../utils/validation')
+const { resolveRange } = require('../utils/dateRange')
 
 const router = express.Router()
 
 // Signed in, and a restaurant owner. Anyone else is stopped here:
 // no token at all -> 401 (authenticateToken), wrong role -> 403 (requireRole).
 router.use(authenticateToken, requireRole('restaurant_owner'))
-
-
-// ============================================================
-// DATE RANGE
-// Both dates arrive as text in the query string, so both are validated
-// before they go anywhere near the database. Defaults to the last 30
-// days (today included, which is why it is 29 days back).
-// ============================================================
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
-
-function toIsoDate(date) {
-  return date.toISOString().slice(0, 10)
-}
-
-// Returns { from, to } on success, or a string describing what was wrong.
-// A real date is demanded, not just the right shape: '2026-02-31' matches
-// the pattern but is not a day, and Date rolls it silently into March,
-// which would quietly shift the window the owner asked for.
-function resolveRange(query) {
-  const today = new Date()
-  const thirtyDaysAgo = new Date(today)
-  thirtyDaysAgo.setDate(today.getDate() - 29)
-
-  const from = query.from === undefined || query.from === '' ? toIsoDate(thirtyDaysAgo) : String(query.from)
-  const to = query.to === undefined || query.to === '' ? toIsoDate(today) : String(query.to)
-
-  for (const value of [from, to]) {
-    if (!DATE_PATTERN.test(value)) return 'Dates must be written as YYYY-MM-DD.'
-    const parsed = new Date(value + 'T00:00:00Z')
-    if (Number.isNaN(parsed.getTime()) || toIsoDate(parsed) !== value) {
-      return 'That is not a real calendar date.'
-    }
-  }
-
-  if (from > to) return 'The start date must not be after the end date.'
-
-  // A year of days is the most the charts are built to draw, and it also
-  // caps how many rows generate_series can be asked to produce.
-  const days = (new Date(to) - new Date(from)) / 86400000
-  if (days > 366) return 'Choose a range of one year or less.'
-
-  return { from, to }
-}
 
 
 // ============================================================
@@ -397,6 +355,311 @@ router.get('/analytics/:restaurantId', requireOwnedRestaurant, async (req, res) 
     busiest_hours: hours.rows,
     status_breakdown: statuses.rows
   })
+})
+
+
+// ============================================================
+// REVIEWS
+//
+// An owner may read the reviews their restaurants were given, and may
+// write a reply alongside each one. They may never touch the review
+// itself: no route in this file updates rating, comment or
+// portion_accuracy, and no route deletes a review row. The only columns
+// any of this writes are owner_reply and owner_replied_at.
+// ============================================================
+
+// Reviews carry no restaurant_id, so every query here walks the only path
+// that connects a review to an owner:
+//   restaurant_reviews -> orders -> restaurant_branches -> restaurants
+// and then filters on restaurants.owner_id, which comes from the verified
+// token. There is no restaurant id in the request to tamper with.
+const OWNED_REVIEWS_FROM = `
+  FROM restaurant_reviews rev
+  JOIN orders o ON o.id = rev.order_id
+  JOIN restaurant_branches b ON b.id = o.branch_id
+  JOIN restaurants r ON r.id = b.restaurant_id
+`
+
+// sort=... cannot be dropped into the SQL text — ORDER BY takes column
+// names, not parameters, so a value from the query string reaching it
+// would be an injection hole. Instead the value is used as a KEY into
+// this fixed table; anything not in it is rejected with a 400 and never
+// reaches the database.
+const REVIEW_SORTS = {
+  newest: 'rev.created_at DESC, rev.id DESC',
+  oldest: 'rev.created_at ASC, rev.id ASC',
+  lowest: 'rev.rating ASC, rev.created_at DESC',
+  highest: 'rev.rating DESC, rev.created_at DESC'
+}
+
+const MAX_REVIEW_LIMIT = 50
+const MAX_REPLY_LENGTH = 1000
+
+
+// ============================================================
+// GET /api/owner/reviews?rating=&unreplied=true&sort=&limit=&offset=
+// ============================================================
+router.get('/reviews', async (req, res) => {
+
+  const { rating, unreplied, sort = 'newest', limit = '20', offset = '0' } = req.query
+
+  if (!Object.prototype.hasOwnProperty.call(REVIEW_SORTS, sort)) {
+    return res.status(400).json({ error: `sort must be one of: ${Object.keys(REVIEW_SORTS).join(', ')}.` })
+  }
+
+  const parsedLimit = Number(limit)
+  const parsedOffset = Number(offset)
+
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > MAX_REVIEW_LIMIT) {
+    return res.status(400).json({ error: `limit must be a whole number between 1 and ${MAX_REVIEW_LIMIT}.` })
+  }
+
+  if (!Number.isInteger(parsedOffset) || parsedOffset < 0) {
+    return res.status(400).json({ error: 'offset must be a whole number of 0 or more.' })
+  }
+
+  let parsedRating = null
+
+  if (rating !== undefined && rating !== '') {
+    parsedRating = Number(rating)
+    if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+      return res.status(400).json({ error: 'rating must be a whole number between 1 and 5.' })
+    }
+  }
+
+  if (unreplied !== undefined && unreplied !== '' && unreplied !== 'true' && unreplied !== 'false') {
+    return res.status(400).json({ error: "unreplied must be 'true' or 'false'." })
+  }
+
+  // The filters are optional, so each condition is written to switch
+  // itself off when its parameter is NULL. That keeps one fixed SQL
+  // string — no clauses glued on at runtime — while still letting the
+  // caller ask for "4 stars only" or "not yet replied to".
+  const values = [
+    req.user.id,
+    parsedRating,
+    unreplied === 'true',
+    parsedLimit,
+    parsedOffset
+  ]
+
+  const reviews = await pool.query(
+    `
+    SELECT
+      rev.id,
+      rev.rating,
+      rev.comment,
+      rev.portion_accuracy,
+      rev.created_at,
+      rev.owner_reply,
+      rev.owner_replied_at,
+      o.id AS order_id,
+      r.name AS restaurant_name,
+      b.area AS branch_name,
+      b.city AS branch_city,
+      -- First name only. A review is public feedback, not an
+      -- introduction: the owner has no business being handed the
+      -- customer's full name, email or phone, so split_part takes
+      -- everything before the first space and nothing else is selected.
+      split_part(u.name, ' ', 1) AS reviewer_first_name
+    ${OWNED_REVIEWS_FROM}
+    JOIN users u ON u.id = o.customer_id
+    WHERE r.owner_id = $1
+      AND ($2::INTEGER IS NULL OR rev.rating = $2)
+      AND ($3::BOOLEAN IS FALSE OR rev.owner_reply IS NULL)
+    ORDER BY ${REVIEW_SORTS[sort]}
+    LIMIT $4 OFFSET $5
+    `,
+    values
+  )
+
+  // Counted in SQL, over the same filters, so the pager knows how many
+  // pages there are without the page itself being fetched twice.
+  const total = await pool.query(
+    `
+    SELECT COUNT(*)::INTEGER AS total
+    ${OWNED_REVIEWS_FROM}
+    WHERE r.owner_id = $1
+      AND ($2::INTEGER IS NULL OR rev.rating = $2)
+      AND ($3::BOOLEAN IS FALSE OR rev.owner_reply IS NULL)
+    `,
+    values.slice(0, 3)
+  )
+
+  res.json({
+    reviews: reviews.rows,
+    pagination: { total: total.rows[0].total, limit: parsedLimit, offset: parsedOffset },
+    filters: { rating: parsedRating, unreplied: unreplied === 'true', sort }
+  })
+})
+
+
+// ============================================================
+// GET /api/owner/reviews/summary
+// The star distribution, in one query.
+// ============================================================
+// generate_series(1, 5) manufactures the five star levels and the reviews
+// are LEFT JOINed onto them, so a star nobody has ever given still comes
+// back as a zero instead of missing from the chart — which would make a
+// distribution with a gap look like a shorter scale.
+//
+// The totals are window functions over those five rows: SUM(COUNT(*)) OVER ()
+// adds the five counts into the grand total, and the share is each star's
+// count against it. 100.0 rather than 100 forces decimal division, or
+// integer division would floor every share to a whole number.
+router.get('/reviews/summary', async (req, res) => {
+
+  const distribution = await pool.query(
+    `
+    SELECT
+      stars.rating::INTEGER AS rating,
+      COUNT(rev.id)::INTEGER AS review_count,
+      ROUND(100.0 * COUNT(rev.id) / NULLIF(SUM(COUNT(rev.id)) OVER (), 0), 1) AS share_pct
+    FROM generate_series(1, 5) AS stars(rating)
+    LEFT JOIN (
+      SELECT rev.id, rev.rating
+      ${OWNED_REVIEWS_FROM}
+      WHERE r.owner_id = $1
+    ) rev ON rev.rating = stars.rating
+    GROUP BY stars.rating
+    ORDER BY stars.rating DESC
+    `,
+    [req.user.id]
+  )
+
+  // One row of headline numbers over the same set of reviews. Aggregates
+  // over an empty set still return a row, so an owner with no reviews yet
+  // gets zeros rather than a missing object.
+  const totals = await pool.query(
+    `
+    SELECT
+      COUNT(rev.id)::INTEGER AS total_reviews,
+      ROUND(AVG(rev.rating), 2) AS average_rating,
+      COUNT(rev.id) FILTER (WHERE rev.owner_reply IS NULL)::INTEGER AS unreplied_count,
+      COUNT(rev.id) FILTER (WHERE rev.owner_reply IS NOT NULL)::INTEGER AS replied_count
+    ${OWNED_REVIEWS_FROM}
+    WHERE r.owner_id = $1
+    `,
+    [req.user.id]
+  )
+
+  res.json({ distribution: distribution.rows, summary: totals.rows[0] })
+})
+
+
+// ============================================================
+// PUT /api/owner/reviews/:id/reply     body: { reply }
+// Writes or overwrites this owner's reply to one of their reviews.
+// ============================================================
+router.put('/reviews/:id/reply', async (req, res) => {
+
+  const reviewId = parseId(req.params.id)
+  if (reviewId === null) return res.status(400).json({ error: 'Invalid review ID.' })
+
+  const reply = typeof req.body.reply === 'string' ? req.body.reply.trim() : ''
+
+  if (!reply || reply.length > MAX_REPLY_LENGTH) {
+    return res.status(400).json({ error: `Write a reply of 1 to ${MAX_REPLY_LENGTH} characters.` })
+  }
+
+  const client = await pool.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    // The ownership test lives INSIDE the UPDATE, as extra rows in the
+    // FROM list that must all match. A review that is not reached by
+    // "this owner's restaurant -> its branches -> their orders" simply
+    // matches no row, and the statement writes nothing.
+    //
+    // Checking first and updating after would leave a gap between the two
+    // statements in which the restaurant could change hands, and would
+    // mean two places that must agree about what ownership means. One
+    // statement cannot disagree with itself.
+    const result = await client.query(
+      `
+      UPDATE restaurant_reviews rv
+      SET owner_reply = $1,
+          owner_replied_at = NOW()
+      FROM orders o, restaurant_branches b, restaurants r
+      WHERE rv.id = $2
+        AND o.id = rv.order_id
+        AND b.id = o.branch_id
+        AND r.id = b.restaurant_id
+        AND r.owner_id = $3
+      RETURNING rv.id, rv.owner_reply, rv.owner_replied_at
+      `,
+      [reply, reviewId, req.user.id]
+    )
+
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      // Deliberately the same 404 whether the review does not exist or
+      // belongs to another owner. Telling the two apart would let anyone
+      // walk the ids and learn which ones are real.
+      return res.status(404).json({ error: 'Review not found.' })
+    }
+
+    await client.query('COMMIT')
+
+    res.json({ review: result.rows[0], message: 'Your reply has been published.' })
+
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+})
+
+
+// ============================================================
+// DELETE /api/owner/reviews/:id/reply
+// Removes the reply. The review itself is untouched.
+// ============================================================
+router.delete('/reviews/:id/reply', async (req, res) => {
+
+  const reviewId = parseId(req.params.id)
+  if (reviewId === null) return res.status(400).json({ error: 'Invalid review ID.' })
+
+  const client = await pool.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    // Same shape as the reply above, and the same reason for it: the
+    // ownership condition is part of the statement that writes.
+    const result = await client.query(
+      `
+      UPDATE restaurant_reviews rv
+      SET owner_reply = NULL,
+          owner_replied_at = NULL
+      FROM orders o, restaurant_branches b, restaurants r
+      WHERE rv.id = $1
+        AND o.id = rv.order_id
+        AND b.id = o.branch_id
+        AND r.id = b.restaurant_id
+        AND r.owner_id = $2
+      RETURNING rv.id
+      `,
+      [reviewId, req.user.id]
+    )
+
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Review not found.' })
+    }
+
+    await client.query('COMMIT')
+
+    res.status(204).end()
+
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 
