@@ -24,18 +24,29 @@ router.post('/tickets', async (req, res, next) => {
     return res.status(400).json({ error: 'Subject must be 3–120 characters and message 10–4,000 characters.' })
   }
   if (order_id != null && !parseId(order_id)) return res.status(400).json({ error: 'Invalid order id.' })
+  const client = await pool.connect()
   try {
+    await client.query('BEGIN')
     if (order_id != null) {
-      const allowed = await pool.query(`SELECT o.id FROM orders o
+      const allowed = await client.query(`SELECT o.id FROM orders o
         JOIN restaurant_branches b ON b.id = o.branch_id JOIN restaurants r ON r.id = b.restaurant_id
         WHERE o.id = $1 AND ($2 = 'admin' OR o.customer_id = $3 OR o.rider_id = $3 OR r.owner_id = $3)`,
       [Number(order_id), req.user.role, req.user.id])
-      if (!allowed.rows.length) return res.status(404).json({ error: 'Order not found for your account.' })
+      if (!allowed.rows.length) {
+        await client.query('ROLLBACK')
+        return res.status(404).json({ error: 'Order not found for your account.' })
+      }
     }
-    const result = await pool.query(`INSERT INTO support_tickets(user_id, order_id, subject, message)
+    const result = await client.query(`INSERT INTO support_tickets(user_id, order_id, subject, message)
       VALUES ($1, $2, $3, $4) RETURNING *`, [req.user.id, order_id ?? null, subject.trim(), message.trim()])
+    await client.query('COMMIT')
     res.status(201).json({ ticket: result.rows[0] })
-  } catch (error) { next(error) }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
 })
 
 router.patch('/tickets/:id', requireRole('admin'), async (req, res, next) => {
@@ -45,12 +56,23 @@ router.patch('/tickets/:id', requireRole('admin'), async (req, res, next) => {
       typeof admin_reply !== 'string' || admin_reply.trim().length < 1 || admin_reply.length > 4000) {
     return res.status(400).json({ error: 'Choose a valid status and write a reply of 1–4,000 characters.' })
   }
+  const client = await pool.connect()
   try {
-    const result = await pool.query(`UPDATE support_tickets SET status = $1, admin_reply = $2,
+    await client.query('BEGIN')
+    const result = await client.query(`UPDATE support_tickets SET status = $1, admin_reply = $2,
       resolved_by = $3, updated_at = NOW() WHERE id = $4 RETURNING *`, [status, admin_reply.trim(), req.user.id, id])
-    if (!result.rows.length) return res.status(404).json({ error: 'Ticket not found.' })
+    if (!result.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Ticket not found.' })
+    }
+    await client.query('COMMIT')
     res.json({ ticket: result.rows[0] })
-  } catch (error) { next(error) }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
 })
 
 router.get('/promos', async (req, res, next) => {
@@ -73,24 +95,41 @@ router.post('/promos', requireRole('admin'), async (req, res, next) => {
       !date || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== expiry_date) {
     return res.status(400).json({ error: 'Provide a valid promo code, percentage (1–100), minimum, expiry date, and usage limit.' })
   }
+  const client = await pool.connect()
   try {
-    const result = await pool.query(`INSERT INTO promo_codes(code, discount_percent, min_order_amount, expiry_date, usage_limit)
+    await client.query('BEGIN')
+    const result = await client.query(`INSERT INTO promo_codes(code, discount_percent, min_order_amount, expiry_date, usage_limit)
       VALUES ($1, $2, $3, $4, $5) RETURNING *`, [code.toUpperCase(), discount_percent, min_order_amount, expiry_date, usage_limit])
+    await client.query('COMMIT')
     res.status(201).json({ promo: result.rows[0] })
   } catch (error) {
+    await client.query('ROLLBACK')
     if (error.code === '23505') return res.status(409).json({ error: 'That promo code already exists.' })
     next(error)
+  } finally {
+    client.release()
   }
 })
 
 router.patch('/promos/:id', requireRole('admin'), async (req, res, next) => {
   const id = parseId(req.params.id)
   if (!id || typeof req.body.is_active !== 'boolean') return res.status(400).json({ error: 'Provide a valid id and is_active boolean.' })
+  const client = await pool.connect()
   try {
-    const result = await pool.query('UPDATE promo_codes SET is_active = $1 WHERE id = $2 RETURNING *', [req.body.is_active, id])
-    if (!result.rows.length) return res.status(404).json({ error: 'Promo code not found.' })
+    await client.query('BEGIN')
+    const result = await client.query('UPDATE promo_codes SET is_active = $1 WHERE id = $2 RETURNING *', [req.body.is_active, id])
+    if (!result.rows.length) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Promo code not found.' })
+    }
+    await client.query('COMMIT')
     res.json({ promo: result.rows[0] })
-  } catch (error) { next(error) }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    next(error)
+  } finally {
+    client.release()
+  }
 })
 
 router.get('/orders', requireRole('admin'), async (req, res, next) => {

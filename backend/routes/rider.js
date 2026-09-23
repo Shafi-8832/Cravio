@@ -18,11 +18,24 @@ router.patch('/profile', async (req, res) => {
       (status === undefined && vehicle_type === undefined)) {
     return res.status(400).json({ error: 'Choose online/offline and a valid vehicle.' })
   }
-  const result = await pool.query(`UPDATE rider_profiles SET status=COALESCE($1,status),
-    vehicle_type=COALESCE($2,vehicle_type) WHERE user_id=$3 AND status<>'busy' RETURNING *`,
-  [status || null, vehicle_type || null, req.user.id])
-  if (!result.rowCount) return res.status(409).json({ error: 'Complete your current delivery before changing availability.' })
-  res.json({ profile: result.rows[0] })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(`UPDATE rider_profiles SET status=COALESCE($1,status),
+      vehicle_type=COALESCE($2,vehicle_type) WHERE user_id=$3 AND status<>'busy' RETURNING *`,
+    [status || null, vehicle_type || null, req.user.id])
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(409).json({ error: 'Complete your current delivery before changing availability.' })
+    }
+    await client.query('COMMIT')
+    res.json({ profile: result.rows[0] })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 // Available jobs show pickup details; customer address is only disclosed after acceptance.

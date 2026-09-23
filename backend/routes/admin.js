@@ -130,8 +130,12 @@ router.patch(
       })
     }
 
+    const client = await pool.connect()
+
     try {
-      const result = await pool.query(`
+      await client.query('BEGIN')
+
+      const result = await client.query(`
         UPDATE users
         SET is_active = $1
         WHERE id = $2
@@ -139,10 +143,14 @@ router.patch(
       `, [is_active, targetId])
 
       if (result.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'User not found.'
         })
       }
+
+      await client.query('COMMIT')
 
       res.json({
         user: result.rows[0],
@@ -150,11 +158,16 @@ router.patch(
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Update user status error:', error)
 
       res.status(500).json({
         error: 'Server error updating user status.'
       })
+
+    } finally {
+      client.release()
     }
   }
 )

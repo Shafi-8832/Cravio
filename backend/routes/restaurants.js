@@ -459,12 +459,25 @@ router.patch('/:id', authenticateToken, requireRole('restaurant_owner', 'admin')
     typeof image_source_url !== 'string' || image_source_url.length > 2048 || (image_source_url && !/^https:\/\/[^\s]+$/.test(image_source_url))) {
     return res.status(400).json({ error: 'Provide a name, cuisine, description and valid HTTPS photo details.' })
   }
-  const result = await pool.query(`UPDATE restaurants SET name=$1,description=$2,cuisine=$3,
-    image_url=$4,image_credit=$5,image_source_url=$6
-    WHERE id=$7 AND (owner_id=$8 OR $9='admin') RETURNING *`,
-  [name.trim(), description, cuisine.trim(), image_url || null, image_credit || null, image_source_url || null, id, req.user.id, req.user.role])
-  if (!result.rowCount) return res.status(404).json({ error: 'Restaurant not found for your account.' })
-  res.json({ restaurant: result.rows[0] })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(`UPDATE restaurants SET name=$1,description=$2,cuisine=$3,
+      image_url=$4,image_credit=$5,image_source_url=$6
+      WHERE id=$7 AND (owner_id=$8 OR $9='admin') RETURNING *`,
+    [name.trim(), description, cuisine.trim(), image_url || null, image_credit || null, image_source_url || null, id, req.user.id, req.user.role])
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Restaurant not found for your account.' })
+    }
+    await client.query('COMMIT')
+    res.json({ restaurant: result.rows[0] })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 module.exports = router

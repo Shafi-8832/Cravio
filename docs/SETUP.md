@@ -14,7 +14,7 @@ Use Node.js 22.12 or newer ([Node 24 LTS](https://github.com/nodejs/node/release
 
 ```bash
 npm ci --prefix backend
-npm ci --prefix frontend
+npm ci --prefix frontendf
 npm run setup
 ```
 

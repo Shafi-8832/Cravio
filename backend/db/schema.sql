@@ -804,11 +804,11 @@ CREATE TABLE order_item_modifiers (
 
 CREATE TABLE revoked_tokens (
 
-    id SERIAL PRIMARY KEY,
+    id SERIAL PRIMARY KEY, -- but this is the primary key 
 
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
 
-    jti VARCHAR(255) NOT NULL UNIQUE,
+    jti VARCHAR(255) NOT NULL UNIQUE, -- this is also a key for the table
 
     expires_at TIMESTAMP NOT NULL,
 

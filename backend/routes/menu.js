@@ -207,9 +207,13 @@ router.post( // every HTTP call needs to be verified.
       })
     }
 
+    const client = await pool.connect()
+
     try {
+      await client.query('BEGIN')
+
       // Find restaurant and owner
-      const restaurantResult = await pool.query(`
+      const restaurantResult = await client.query(`
         SELECT
           id,
           owner_id
@@ -218,6 +222,8 @@ router.post( // every HTTP call needs to be verified.
       `, [restaurantId])
 
       if (restaurantResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Restaurant not found.'
         })
@@ -230,12 +236,14 @@ router.post( // every HTTP call needs to be verified.
         req.user.role !== 'admin' &&
         restaurant.owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant.'
         })
       }
 
-      const result = await pool.query(`
+      const result = await client.query(`
         INSERT INTO menu_categories
           (restaurant_id, name)
         VALUES ($1, $2)
@@ -245,16 +253,22 @@ router.post( // every HTTP call needs to be verified.
         name.trim()
       ])
 
+      await client.query('COMMIT')
+
       res.status(201).json({
         category: result.rows[0]
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Create category error:', error)
 
       res.status(500).json({
         error: 'Server error creating menu category.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -309,7 +323,11 @@ router.post(
       return res.status(400).json({ error: 'Invalid description, photo URL or vegetarian flag.' })
     }
 
+    const client = await pool.connect()
+
     try {
+      await client.query('BEGIN')
+
       // Find category, restaurant, and owner together
 
       // SQL NOTE ** : this is a MANY JOIN 1 scenario
@@ -320,7 +338,7 @@ router.post(
       // fetch the owner_id of that restaurant
       // check whether the fetched owner_id matches the id sent by frontend 
       // if matches, the request is safe, otherwise not
-      const categoryResult = await pool.query(`
+      const categoryResult = await client.query(`
         SELECT
           mc.id,
           mc.restaurant_id,
@@ -332,6 +350,8 @@ router.post(
       `, [categoryId])
 
       if (categoryResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Menu category not found.'
         })
@@ -344,12 +364,14 @@ router.post(
         req.user.role !== 'admin' &&
         category.owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      const result = await pool.query(`
+      const result = await client.query(`
         INSERT INTO menu_items
         (
           category_id,
@@ -372,16 +394,22 @@ router.post(
         is_veg ?? false
       ])
 
+      await client.query('COMMIT')
+
       res.status(201).json({
         item: result.rows[0]
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Create menu item error:', error)
 
       res.status(500).json({
         error: 'Server error creating menu item.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -430,7 +458,11 @@ router.patch(
       return res.status(400).json({ error: 'Invalid item name, description, image URL or vegetarian flag.' })
     }
 
+    const client = await pool.connect()
+
     try { // ? menu_category + restaurant + menu_items --> 3 relationships or trinary relationship? which is better?
+      await client.query('BEGIN')
+
       // Find item + restaurant owner
 
 
@@ -440,7 +472,7 @@ router.patch(
       // fetch the owner_id, match it with the owner_id sent from the frontend
       // if matches, safe. otherwise reject
 
-      const itemResult = await pool.query(`
+      const itemResult = await client.query(`
         SELECT
           mi.id,
           mi.restaurant_id,
@@ -452,6 +484,8 @@ router.patch(
       `, [itemId])
 
       if (itemResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Menu item not found.'
         })
@@ -463,6 +497,8 @@ router.patch(
         req.user.role !== 'admin' &&
         item.owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
@@ -472,7 +508,7 @@ router.patch(
       // so if the user left the name field blank then JS passes NULL to $1
       // so the previous name stays
 
-      const result = await pool.query(`
+      const result = await client.query(`
         UPDATE menu_items
         SET
           name = COALESCE($1, name),
@@ -491,16 +527,22 @@ router.patch(
         itemId
       ])
 
+      await client.query('COMMIT')
+
       res.json({ // send the 
         item: result.rows[0] // Frontend needs to instantly reflects the changes
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Update menu item error:', error)
 
       res.status(500).json({
         error: 'Server error updating menu item.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -525,7 +567,11 @@ router.patch(
       })
     }
 
+    const client = await pool.connect()
+
     try {
+      await client.query('BEGIN')
+
 
       // the API request PATCH from frontend did not contain owner_id
       // we need to find it ourselves
@@ -533,7 +579,7 @@ router.patch(
       // fetch the owner_id by the itemID
       // if the id from frontend matches the owner_id from db --> safe
 
-      const itemResult = await pool.query(`
+      const itemResult = await client.query(`
         SELECT
           mi.id,
           r.owner_id
@@ -544,6 +590,8 @@ router.patch(
       `, [itemId])
 
       if (itemResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Menu item not found.'
         })
@@ -555,13 +603,15 @@ router.patch(
         req.user.role !== 'admin' &&
         item.owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
       // SQL NOTE ** : ezzy
-      const result = await pool.query(`
+      const result = await client.query(`
         UPDATE menu_items
         SET is_available = NOT is_available
         WHERE id = $1
@@ -570,6 +620,8 @@ router.patch(
           name,
           is_available
       `, [itemId])
+
+      await client.query('COMMIT')
 
       res.json({
         item: result.rows[0], // nested JSON object
@@ -581,11 +633,15 @@ router.patch(
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Toggle menu item error:', error)
 
       res.status(500).json({
         error: 'Server error toggling menu item availability.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -610,8 +666,12 @@ router.delete(
       })
     }
 
+    const client = await pool.connect()
+
     try {
-      const itemResult = await pool.query(`
+      await client.query('BEGIN')
+
+      const itemResult = await client.query(`
         SELECT
           mi.id,
           mi.name,
@@ -623,6 +683,8 @@ router.delete(
       `, [itemId])
 
       if (itemResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Menu item not found.'
         })
@@ -634,26 +696,34 @@ router.delete(
         req.user.role !== 'admin' &&
         item.owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      await pool.query(`
+      await client.query(`
         DELETE FROM menu_items
         WHERE id = $1
       `, [itemId])
+
+      await client.query('COMMIT')
 
       res.json({
         message: `Menu item "${item.name}" deleted successfully.`
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Delete menu item error:', error)
 
       res.status(500).json({
         error: 'Server error deleting menu item.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -742,22 +812,30 @@ router.post(
       })
     }
 
+    const client = await pool.connect()
+
     try {
+      await client.query('BEGIN')
+
       const item = await findEditableMenuItem(pool, itemId, req.user)
 
       if (!item) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Menu item not found.'
         })
       }
 
       if (req.user.role !== 'admin' && item.owner_id !== req.user.id) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      const result = await pool.query(`
+      const result = await client.query(`
         INSERT INTO modifier_groups
           (menu_item_id, name, is_required, min_selection, max_selection)
         VALUES ($1, $2, $3, $4, $5)
@@ -770,6 +848,8 @@ router.post(
         maxSelection
       ])
 
+      await client.query('COMMIT')
+
       res.status(201).json({
         modifier_group: {
           ...result.rows[0],
@@ -778,11 +858,15 @@ router.post(
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Create modifier group error:', error)
 
       res.status(500).json({
         error: 'Server error creating modifier group.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -826,8 +910,12 @@ router.post(
       })
     }
 
+    const client = await pool.connect()
+
     try {
-      const groupResult = await pool.query(`
+      await client.query('BEGIN')
+
+      const groupResult = await client.query(`
         SELECT
           mg.id,
           mg.menu_item_id,
@@ -841,6 +929,8 @@ router.post(
       `, [groupId])
 
       if (groupResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Modifier group not found.'
         })
@@ -850,12 +940,14 @@ router.post(
         req.user.role !== 'admin' &&
         groupResult.rows[0].owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      const result = await pool.query(`
+      const result = await client.query(`
         INSERT INTO modifier_options
           (modifier_group_id, name, price_modifier)
         VALUES ($1, $2, $3)
@@ -866,16 +958,22 @@ router.post(
         priceModifier
       ])
 
+      await client.query('COMMIT')
+
       res.status(201).json({
         modifier_option: result.rows[0]
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Create modifier option error:', error)
 
       res.status(500).json({
         error: 'Server error creating modifier option.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -901,8 +999,12 @@ router.patch(
       })
     }
 
+    const client = await pool.connect()
+
     try {
-      const optionResult = await pool.query(`
+      await client.query('BEGIN')
+
+      const optionResult = await client.query(`
         SELECT
           mo.id,
           r.owner_id
@@ -917,6 +1019,8 @@ router.patch(
       `, [optionId])
 
       if (optionResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Modifier option not found.'
         })
@@ -926,28 +1030,36 @@ router.patch(
         req.user.role !== 'admin' &&
         optionResult.rows[0].owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      const result = await pool.query(`
+      const result = await client.query(`
         UPDATE modifier_options
         SET is_available = NOT is_available
         WHERE id = $1
         RETURNING id, name, price_modifier, is_available
       `, [optionId])
 
+      await client.query('COMMIT')
+
       res.json({
         modifier_option: result.rows[0]
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Toggle modifier option error:', error)
 
       res.status(500).json({
         error: 'Server error toggling modifier option.'
       })
+    } finally {
+      client.release()
     }
   }
 )
@@ -973,8 +1085,12 @@ router.delete(
       })
     }
 
+    const client = await pool.connect()
+
     try {
-      const groupResult = await pool.query(`
+      await client.query('BEGIN')
+
+      const groupResult = await client.query(`
         SELECT
           mg.id,
           mg.name,
@@ -988,6 +1104,8 @@ router.delete(
       `, [groupId])
 
       if (groupResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
         return res.status(404).json({
           error: 'Modifier group not found.'
         })
@@ -997,26 +1115,34 @@ router.delete(
         req.user.role !== 'admin' &&
         groupResult.rows[0].owner_id !== req.user.id
       ) {
+        await client.query('ROLLBACK')
+
         return res.status(403).json({
           error: 'You can only modify your own restaurant menu.'
         })
       }
 
-      await pool.query(
+      await client.query(
         'DELETE FROM modifier_groups WHERE id = $1',
         [groupId]
       )
+
+      await client.query('COMMIT')
 
       res.json({
         message: `Modifier group "${groupResult.rows[0].name}" deleted successfully.`
       })
 
     } catch (error) {
+      await client.query('ROLLBACK')
+
       console.error('Delete modifier group error:', error)
 
       res.status(500).json({
         error: 'Server error deleting modifier group.'
       })
+    } finally {
+      client.release()
     }
   }
 )

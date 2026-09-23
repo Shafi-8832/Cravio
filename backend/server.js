@@ -1,5 +1,5 @@
 const express = require('express')
-const cors = require('cors') // ?
+const cors = require('cors') // what does it do
 require('dotenv').config() // ?
 
 // Fail fast instead of per-request. Without JWT_SECRET, jwt.sign() throws

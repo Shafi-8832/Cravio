@@ -21,11 +21,21 @@ router.patch('/profile', async (req, res) => {
   if (!name || name.length > 100 || !/^[0-9+\-\s()]{7,20}$/.test(phone)) {
     return res.status(400).json({ error: 'Enter a name (up to 100 characters) and a valid phone number.' })
   }
-  const result = await pool.query(
-    'UPDATE users SET name = $1, phone = $2 WHERE id = $3 RETURNING id, name, email, phone, role',
-    [name, phone, req.user.id]
-  )
-  res.json({ user: result.rows[0] })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(
+      'UPDATE users SET name = $1, phone = $2 WHERE id = $3 RETURNING id, name, email, phone, role',
+      [name, phone, req.user.id]
+    )
+    await client.query('COMMIT')
+    res.json({ user: result.rows[0] })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 // PATCH /api/account/password: any signed-in role. The account changed is
@@ -42,15 +52,33 @@ router.patch('/password', async (req, res) => {
     return res.status(400).json({ error: 'Your new password must be different from the current one.' })
   }
 
-  const result = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id])
-  if (!result.rowCount) return res.status(404).json({ error: 'Account not found.' })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
 
-  const matches = await bcrypt.compare(currentPassword, result.rows[0].password)
-  if (!matches) return res.status(403).json({ error: 'Your current password is incorrect.' })
+    const result = await client.query('SELECT password FROM users WHERE id = $1', [req.user.id])
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Account not found.' })
+    }
 
-  const hashed = await bcrypt.hash(newPassword, 10)
-  await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashed, req.user.id])
-  res.json({ message: 'Password updated. Your other devices stay signed in until their session expires.' })
+    const matches = await bcrypt.compare(currentPassword, result.rows[0].password)
+    if (!matches) {
+      await client.query('ROLLBACK')
+      return res.status(403).json({ error: 'Your current password is incorrect.' })
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 10)
+    await client.query('UPDATE users SET password = $1 WHERE id = $2', [hashed, req.user.id])
+
+    await client.query('COMMIT')
+    res.json({ message: 'Password updated. Your other devices stay signed in until their session expires.' })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 
@@ -125,9 +153,22 @@ router.patch('/addresses/:id', saveAddress)
 router.delete('/addresses/:id', async (req, res) => {
   const id = parseId(req.params.id)
   if (!id) return res.status(400).json({ error: 'Invalid address ID.' })
-  const result = await pool.query('DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2 RETURNING id', [id, req.user.id])
-  if (!result.rowCount) return res.status(404).json({ error: 'Address not found.' })
-  res.status(204).end()
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query('DELETE FROM customer_addresses WHERE id=$1 AND user_id=$2 RETURNING id', [id, req.user.id])
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Address not found.' })
+    }
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 router.get('/favorites', async (req, res) => {
@@ -139,18 +180,41 @@ router.get('/favorites', async (req, res) => {
 router.put('/favorites/:restaurantId', async (req, res) => {
   const id = parseId(req.params.restaurantId)
   if (!id) return res.status(400).json({ error: 'Invalid restaurant ID.' })
-  const result = await pool.query(`INSERT INTO customer_favorites(user_id,restaurant_id)
-    SELECT $1,id FROM restaurants WHERE id=$2
-    ON CONFLICT (user_id,restaurant_id) DO UPDATE SET restaurant_id=EXCLUDED.restaurant_id
-    RETURNING restaurant_id`, [req.user.id, id])
-  if (!result.rowCount) return res.status(404).json({ error: 'Restaurant not found.' })
-  res.json({ restaurant_id: id, is_favorite: true })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await client.query(`INSERT INTO customer_favorites(user_id,restaurant_id)
+      SELECT $1,id FROM restaurants WHERE id=$2
+      ON CONFLICT (user_id,restaurant_id) DO UPDATE SET restaurant_id=EXCLUDED.restaurant_id
+      RETURNING restaurant_id`, [req.user.id, id])
+    if (!result.rowCount) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ error: 'Restaurant not found.' })
+    }
+    await client.query('COMMIT')
+    res.json({ restaurant_id: id, is_favorite: true })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 router.delete('/favorites/:restaurantId', async (req, res) => {
   const id = parseId(req.params.restaurantId)
   if (!id) return res.status(400).json({ error: 'Invalid restaurant ID.' })
-  await pool.query('DELETE FROM customer_favorites WHERE user_id=$1 AND restaurant_id=$2', [req.user.id, id])
-  res.status(204).end()
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('DELETE FROM customer_favorites WHERE user_id=$1 AND restaurant_id=$2', [req.user.id, id])
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 module.exports = router
