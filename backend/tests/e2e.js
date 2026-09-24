@@ -222,6 +222,30 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   check('reviews listed publicly', reviews.body.reviews.length >= 1)
   check('summary average present', Number(reviews.body.summary.average_rating) > 0)
 
+  // ---------------------------------------------------------
+  section('rider reviews are customer-written and admin-only')
+  const badRiderRating = await call('POST', `/api/reviews/orders/${o.id}/rider`, cust, { rating: 0 })
+  check('rider rating out of range -> 400', badRiderRating.status === 400)
+
+  const riderReview = await call('POST', `/api/reviews/orders/${o.id}/rider`, cust, { rating: 5, comment: 'Arrived early, food still hot.' })
+  check('rider review created -> 201', riderReview.status === 201, JSON.stringify(riderReview.body))
+
+  const dupeRider = await call('POST', `/api/reviews/orders/${o.id}/rider`, cust, { rating: 1 })
+  check('second rider review same order -> 409 ALREADY_REVIEWED', dupeRider.status === 409 && dupeRider.body.code === 'ALREADY_REVIEWED')
+
+  const foreignRider = await call('POST', `/api/reviews/orders/${o.id}/rider`, cust2, { rating: 1 })
+  check('rating the rider on someone else order -> 403', foreignRider.status === 403)
+
+  const receipt = await call('GET', `/api/orders/${o.id}`, cust)
+  check('order details report rider_reviewed', receipt.body.order.rider_reviewed === true)
+  check('order details never carry the rider rating itself', JSON.stringify(receipt.body).includes('Arrived early') === false)
+
+  // The whole point of the feature: only an admin can read it back.
+  check('customer cannot list rider reviews -> 403', (await call('GET', '/api/admin/rider-reviews', cust)).status === 403)
+  check('rider cannot list rider reviews -> 403', (await call('GET', '/api/admin/rider-reviews', rider)).status === 403)
+  check('owner cannot list rider reviews -> 403', (await call('GET', '/api/admin/rider-reviews', ownerPizza)).status === 403)
+  check('anonymous cannot list rider reviews -> 401', (await call('GET', '/api/admin/rider-reviews')).status === 401)
+
   const listAfter = await call('GET', '/api/restaurants')
   const pizzaAfter = listAfter.body.restaurants.find(r => r.name === 'Pizza Republic')
   check('restaurant list average_rating now populated', Number(pizzaAfter.average_rating) > 0, `got ${pizzaAfter.average_rating}`)

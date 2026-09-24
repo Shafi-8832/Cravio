@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS
     order_item_modifiers,
 
     quality_flag_log,
+    rider_reviews,
     restaurant_reviews,
     deliveries,
     payments,
@@ -815,3 +816,59 @@ CREATE TABLE revoked_tokens (
     revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+
+-- ============================================================
+-- 21. RIDER REVIEWS
+--
+-- The customer's feedback about the delivery rider, kept separate from
+-- restaurant_reviews because it rates a different person and is private:
+-- only the admin panel reads it (GET /api/admin/rider-reviews). Keeping it
+-- in its own table means no public restaurant query can ever select it by
+-- accident.
+--
+-- See db/migrations/007_rider_reviews.sql for the same table applied to a
+-- database that already exists.
+-- ============================================================
+
+CREATE TABLE rider_reviews (
+
+    id SERIAL PRIMARY KEY,
+
+
+    -- One rider review per delivery.
+    order_id INTEGER
+        NOT NULL
+        UNIQUE
+        REFERENCES orders(id)
+        ON DELETE CASCADE,
+
+
+    -- Stored rather than read back through orders.rider_id: the review
+    -- belongs to whoever actually made this delivery.
+    rider_id INTEGER
+        NOT NULL
+        REFERENCES users(id),
+
+
+    rating INTEGER
+        NOT NULL
+        CHECK (
+            rating BETWEEN 1 AND 5
+        ),
+
+
+    comment TEXT
+        CHECK (
+            comment IS NULL
+            OR char_length(comment) BETWEEN 1 AND 1000
+        ),
+
+
+    created_at TIMESTAMPTZ
+        NOT NULL
+        DEFAULT NOW()
+);
+
+
+CREATE INDEX idx_rider_reviews_rider_created
+    ON rider_reviews(rider_id, created_at DESC);

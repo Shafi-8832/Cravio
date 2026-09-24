@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1067" role="img" aria-label="A restaurant storefront with a chef's hat and a rising sales chart">
+  <rect width="1600" height="1067" fill="#efe3ea"/>
+  <circle cx="300" cy="230" r="200" fill="#e6d0dc"/>
+  <rect x="0" y="880" width="1600" height="187" fill="#dcc3d1"/>
+
+  <!-- storefront -->
+  <g transform="translate(180 300)">
+    <rect x="0" y="150" width="760" height="430" fill="#fff"/>
+    <!-- striped awning -->
+    <g>
+      <path d="M-30 150 H790 L760 60 H0 Z" fill="#9f1239"/>
+      <path d="M-30 150 q51 60 102 0 q51 60 102 0 q51 60 102 0 q51 60 102 0 q51 60 102 0 q51 60 102 0 q51 60 102 0 q51 60 102 0" fill="#9f1239"/>
+      <path d="M72 150 q51 60 102 0 L174 150 L154 60 H92 Z" fill="#fff" opacity=".9"/>
+      <path d="M276 150 q51 60 102 0 L378 150 L360 60 H296 Z" fill="#fff" opacity=".9"/>
+      <path d="M480 150 q51 60 102 0 L582 150 L564 60 H500 Z" fill="#fff" opacity=".9"/>
+    </g>
+    <!-- sign -->
+    <rect x="200" y="-40" width="360" height="90" rx="20" fill="#1f2d27"/>
+    <text x="380" y="20" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="700" fill="#fff">KITCHEN</text>
+    <!-- window + door -->
+    <rect x="60" y="260" width="360" height="220" rx="14" fill="#fbe7d5"/>
+    <path d="M60 370 H420" stroke="#fff" stroke-width="10"/>
+    <rect x="500" y="260" width="190" height="320" rx="14" fill="#9f1239"/>
+    <circle cx="660" cy="430" r="12" fill="#f4c542"/>
+    <!-- chef hat in the window -->
+    <g transform="translate(170 280)">
+      <circle cx="30" cy="40" r="38" fill="#fff"/>
+      <circle cx="80" cy="25" r="46" fill="#fff"/>
+      <circle cx="130" cy="40" r="38" fill="#fff"/>
+      <rect x="20" y="50" width="120" height="60" fill="#fff"/>
+      <rect x="20" y="100" width="120" height="24" fill="#f3e8ee"/>
+    </g>
+  </g>
+
+  <!-- sales card -->
+  <g transform="translate(1030 250)">
+    <rect width="420" height="420" rx="32" fill="#fff"/>
+    <text x="40" y="80" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#1f2d27">Today's orders</text>
+    <text x="40" y="150" font-family="Helvetica, Arial, sans-serif" font-size="64" font-weight="800" fill="#9f1239">128</text>
+    <g fill="#f3c9d9">
+      <rect x="40"  y="300" width="50" height="80" rx="8"/>
+      <rect x="110" y="260" width="50" height="120" rx="8"/>
+      <rect x="180" y="280" width="50" height="100" rx="8"/>
+      <rect x="250" y="220" width="50" height="160" rx="8"/>
+    </g>
+    <rect x="320" y="180" width="50" height="200" rx="8" fill="#ea580c"/>
+    <path d="M65 290 L135 245 L205 265 L275 205 L345 165" fill="none" stroke="#9f1239" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

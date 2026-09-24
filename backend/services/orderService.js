@@ -242,6 +242,16 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
         o.delivery_fee,
         o.total_amount,
         o.review_eligible,
+        -- Whether the rider has already been rated for this order, so the
+        -- receipt can hide the rider form after a reload instead of offering
+        -- a submission the API would reject with ALREADY_REVIEWED.
+        -- Only the boolean is exposed here; the rating and comment themselves
+        -- are readable exclusively through GET /api/admin/rider-reviews.
+        EXISTS (
+          SELECT 1
+          FROM rider_reviews rr
+          WHERE rr.order_id = o.id
+        ) AS rider_reviewed,
         o.created_at,
         o.promo_code_id,
         pc.code AS promo_code,
@@ -364,6 +374,7 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
     delivery_fee: row.delivery_fee,
     total_amount: row.total_amount,
     review_eligible: row.review_eligible,
+    rider_reviewed: row.rider_reviewed,
     created_at: row.created_at,
     promo: row.promo_code_id
       ? {

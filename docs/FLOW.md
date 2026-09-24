@@ -1661,3 +1661,207 @@ reviews at all from dividing by zero.
 everything before the first space. A review is public feedback, not an
 introduction — the owner has no business being handed the customer's full
 name, and email and phone are never selected at all.
+
+---
+
+### Rider reviews (stars for the delivery, visible only to the admin)
+
+**Files involved:**
+
+- `backend/db/migrations/007_rider_reviews.sql` — the new `rider_reviews` table and its index
+- `backend/db/schema.sql` — the same table, for a database created from scratch (table 21)
+- `backend/routes/reviews.js` — the customer writes it (`POST /api/reviews/orders/:orderId/rider`)
+- `backend/routes/admin.js` — the admin reads it (`GET /api/admin/rider-reviews`)
+- `backend/services/orderService.js` — the order receipt learns whether the rider was already rated
+- `frontend/src/components/StarInput.jsx` — the clickable star picker
+- `frontend/src/components/OrderReceipt.jsx` — the customer's rider form
+- `frontend/src/pages/AdminDashboardPage.jsx` — the admin's "Rider reviews" tab
+- `frontend/src/services/orderApi.js`, `frontend/src/services/adminApi.js` — the two calls
+- `backend/tests/e2e.js` — asserts the write works once and that nobody but an admin can read it
+
+---
+
+**Flow (exam-level explanation):**
+
+**What this feature is.** After an order has been delivered, the customer can
+give the *rider* a rating out of five stars and, if they want, write a
+sentence about the delivery. That feedback is private. The rider never sees
+it, the restaurant never sees it, no other customer sees it. Only an admin,
+signed in to the Cravio control room, can read it.
+
+**Why it is a separate table from the restaurant review.**
+
+1. A restaurant review is about the food. A rider review is about the
+   delivery. They rate two different people, so one row cannot honestly hold
+   both — a customer can love the pizza and be furious that it arrived cold
+   an hour late.
+2. The restaurant review is public: it appears on the restaurant's page. The
+   rider review is not. Keeping them in separate tables means a query written
+   later for the public page **cannot accidentally select** the private one.
+   Privacy here is a property of the database layout, not of remembering to
+   filter.
+
+So there is a new table, `rider_reviews`, with one row per delivery:
+
+```sql
+CREATE TABLE IF NOT EXISTS rider_reviews (
+  id SERIAL PRIMARY KEY,
+  order_id INTEGER NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+  rider_id INTEGER NOT NULL REFERENCES users(id),
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT CHECK (comment IS NULL OR char_length(comment) BETWEEN 1 AND 1000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+Reading that line by line. `REFERENCES orders(id)` is a **foreign key** — it
+means the value in this column must be the id of a row that really exists in
+the `orders` table, so a review can never point at an order that is not
+there. `UNIQUE` on the same column means no two rows may share an order id,
+which is how "one rider review per delivery" is enforced by the database
+itself rather than by trusting the code. `CHECK` is a rule the database
+refuses to break: a rating outside 1–5, or a comment longer than 1000
+characters, is rejected even if some future code forgets to validate it.
+
+**Why `rider_id` is stored even though the order already names a rider.**
+The review is about the person who actually carried *this* delivery. If an
+order were ever reassigned to a different rider, a review that had to look
+the rider up through the order would silently move to the new one and blame
+the wrong person. Storing the id freezes it.
+
+**No trigger, no function, no procedure was added here, on purpose.** The
+restaurant rating needs a trigger because `restaurants.avg_rating` is a
+stored number that must stay in step with the reviews behind it. A rider has
+no stored average anywhere — the admin panel computes it on the spot when it
+is asked for, which is a handful of rows and a page nobody loads often. The
+course marks unnecessary triggers down as hard as missing ones, so none was
+added.
+
+**Step by step: the customer writes the review.**
+
+1. The customer opens their order on **Your orders** and the receipt expands.
+2. The receipt shows the rider form only when four things are true: they are
+   the customer, the order status is `delivered`, `review_eligible` is true,
+   and a rider is actually recorded on the delivery. `review_eligible` is a
+   flag the database sets when the rider completes the delivery, so it is
+   proof the delivery really happened.
+3. They tap a star. The stars are five real buttons, not a dropdown list —
+   `frontend/src/components/StarInput.jsx`. Hovering or tabbing across them
+   fills them in as a preview; clicking one fixes the rating. The submit
+   button stays disabled until a star is chosen, so nothing can be sent with
+   a score the customer never picked.
+4. The comment box is optional. Stars with no words is a valid submission.
+5. Submitting sends `POST /api/reviews/orders/:orderId/rider` with the token
+   attached. A **token** here is the signed string proving who is logged in;
+   the server reads the user's id out of it and never trusts an id sent in
+   the body.
+6. The server checks, in this order: is the id a real number → is the rating
+   a whole number between 1 and 5 → is the comment within 1000 characters →
+   does the order exist (else **404**) → does it belong to *this* customer
+   (else **403**) → has it actually been delivered (else **409**) → is a
+   rider recorded (else **409**) → has this order already been rated (else
+   **409**). Only then does it insert.
+7. The whole check-and-insert runs inside `BEGIN` … `COMMIT`, with `ROLLBACK`
+   in the catch. A **transaction** means the statements between `BEGIN` and
+   `COMMIT` either all take effect or none do.
+
+**The one subtle line, and why it is written that way.**
+
+```sql
+SELECT o.id, o.customer_id, o.status, o.review_eligible, d.rider_id
+FROM orders o
+LEFT JOIN deliveries d ON d.order_id = o.id
+WHERE o.id = $1
+FOR UPDATE OF o;
+```
+
+A **join** means matching rows in one table to rows in another using a shared
+value — here the order's id, which the deliveries row also carries. It is a
+`LEFT JOIN` rather than a plain join because an order with no delivery row
+must still come back, so the route can answer "there is no rider to rate"
+with a clear 409 instead of a blank 404.
+
+`FOR UPDATE` locks the rows it reads until the transaction ends. Without it,
+two taps arriving at the same instant could both run the "already rated?"
+check, both see nothing, and both try to insert — and the second would fail
+on the UNIQUE constraint as an ugly 500 instead of a clean 409. `OF o`
+narrows the lock to the `orders` row: rows on the null side of a `LEFT JOIN`
+cannot be locked, so naming the table is required here, not optional.
+
+The rider being reviewed is taken from `d.rider_id` — the database's own
+record of who delivered it. The client never gets to say who the review is
+about.
+
+**Step by step: only the admin can read it back.**
+
+1. The admin opens the control room and clicks the **Rider reviews** tab.
+2. The page calls `GET /api/admin/rider-reviews`.
+3. That route is wrapped in two pieces of **middleware** — small functions
+   that run before the handler and can stop the request. `authenticateToken`
+   rejects a missing, revoked or expired token with **401**. `requireRole('admin')`
+   rejects a valid token belonging to anyone who is not an admin with **403**.
+4. **This endpoint is the only place in the entire API that selects from
+   `rider_reviews`.** That is the real guarantee. Hiding the tab in the
+   frontend would prove nothing — a rider could call the API with curl. There
+   is simply no other route that returns these rows, so there is nothing to
+   call. The e2e suite asserts exactly this: customer, rider and owner all get
+   403, and an anonymous request gets 401.
+5. The order receipt does expose one boolean, `rider_reviewed`, so the form
+   can hide itself after a page reload. A boolean is not the review: the
+   rating and the comment never leave the admin endpoint.
+
+**The two queries the admin panel runs.**
+
+The feed — every review, newest first:
+
+```sql
+SELECT rr.id, rr.order_id, rr.rating, rr.comment, rr.created_at,
+       rider.id AS rider_id, rider.name AS rider_name, rider.is_active AS rider_is_active,
+       customer.name AS customer_name, r.name AS restaurant_name,
+       COUNT(*) OVER()::INTEGER AS total_count
+FROM rider_reviews rr
+JOIN users rider            ON rider.id = rr.rider_id
+JOIN orders o               ON o.id = rr.order_id
+JOIN users customer         ON customer.id = o.customer_id
+JOIN restaurant_branches rb ON rb.id = o.branch_id
+JOIN restaurants r          ON r.id = rb.restaurant_id
+WHERE rr.rider_id = $1            -- only when a rider filter is chosen
+ORDER BY rr.created_at DESC
+LIMIT $2 OFFSET $3;
+```
+
+Five tables, because a row in the panel has to say five things: the review,
+who was rated, which order, who wrote it, and which restaurant that order
+came from. `users` appears twice under two names, `rider` and `customer` —
+the same table joined twice because two different people are being looked up
+in it. `COUNT(*) OVER()` is a **window function**: it counts all the matching
+rows *before* `LIMIT` cuts the page down, so the panel learns the total
+number of pages without a second query to the database.
+
+The scorecard — one line per rider:
+
+```sql
+SELECT rider.id AS rider_id, rider.name AS rider_name, rider.is_active,
+       COUNT(rr.id)::INTEGER AS review_count,
+       ROUND(AVG(rr.rating), 2) AS average_rating,
+       COUNT(*) FILTER (WHERE rr.rating <= 2)::INTEGER AS low_rating_count
+FROM users rider
+JOIN rider_reviews rr ON rr.rider_id = rider.id
+WHERE rider.role = 'rider'
+GROUP BY rider.id, rider.name, rider.is_active
+ORDER BY average_rating ASC, review_count DESC;
+```
+
+`GROUP BY` collapses all of one rider's reviews into a single row so the
+**aggregate functions** `COUNT` and `AVG` describe that rider. `FILTER
+(WHERE rr.rating <= 2)` counts only the one- and two-star reviews inside that
+same pass — a rider with twenty good deliveries and four terrible ones still
+averages a respectable score, and this column is what makes those four
+visible. The ordering puts the worst average first, because that is the row
+an admin actually needs to see.
+
+**One deliberate change to an existing screen.** The meal review on the same
+receipt used to pick its rating from a dropdown reading "5 stars, 4 stars,
+…". It now uses the same `StarInput` component, and like the rider form it
+starts unrated rather than pre-filled at five — a rating the customer never
+chose is not a rating.

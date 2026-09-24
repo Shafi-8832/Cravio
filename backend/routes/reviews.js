@@ -211,6 +211,166 @@ router.post(
 
 
 // ============================================================
+// POST /api/reviews/orders/:orderId/rider
+// customer only
+// Stars and an optional comment about the rider who delivered the order.
+//
+// Deliberately separate from the meal review above: a customer may be happy
+// with the food and unhappy with the delivery, so the two are independent
+// submissions and either can be sent without the other.
+//
+// What is written here is NEVER returned by any customer, owner or rider
+// endpoint. The only way to read it back is GET /api/admin/rider-reviews,
+// which is admin-only. That is why the rider is not shown their own score:
+// it exists for the admin to act on, not as a public reputation.
+// ============================================================
+router.post(
+  '/orders/:orderId/rider',
+  authenticateToken,
+  requireRole('customer'),
+  async (req, res) => {
+    const orderId = parseId(req.params.orderId)
+    const { rating, comment } = req.body
+
+    if (orderId === null) {
+      return res.status(400).json({
+        error: 'Invalid order ID.'
+      })
+    }
+
+    const parsedRating = Number(rating)
+
+    if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+      return res.status(400).json({
+        error: 'rating must be an integer between 1 and 5.'
+      })
+    }
+
+    const trimmedComment =
+      typeof comment === 'string' && comment.trim() ? comment.trim() : null
+
+    if (trimmedComment && trimmedComment.length > 1000) {
+      return res.status(400).json({
+        error: 'comment cannot exceed 1000 characters.'
+      })
+    }
+
+    const client = await pool.connect()
+
+    try {
+      await client.query('BEGIN')
+
+      // The order and its delivery are read in one go: the rider being
+      // reviewed is the one on the deliveries row, not whatever the client
+      // sent, so the client never gets to name the target of a review.
+      // FOR UPDATE OF o locks only the order row — deliveries is joined for
+      // reading, and an outer join cannot be locked anyway.
+      const orderResult = await client.query(
+        `
+          SELECT
+            o.id,
+            o.customer_id,
+            o.status,
+            o.review_eligible,
+            d.rider_id
+          FROM orders o
+          LEFT JOIN deliveries d
+            ON d.order_id = o.id
+          WHERE o.id = $1
+          FOR UPDATE OF o
+        `,
+        [orderId]
+      )
+
+      if (orderResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
+        return res.status(404).json({
+          error: 'Order not found.'
+        })
+      }
+
+      const order = orderResult.rows[0]
+
+      if (order.customer_id !== req.user.id) {
+        await client.query('ROLLBACK')
+
+        return res.status(403).json({
+          error: 'You can only review your own orders.'
+        })
+      }
+
+      // Same gate as the meal review: review_eligible is set by the rider
+      // completing the delivery, so it is proof the delivery really happened.
+      if (!order.review_eligible || order.status !== 'delivered') {
+        await client.query('ROLLBACK')
+
+        return res.status(409).json({
+          error: 'You can only rate the rider after the order has been delivered.',
+          code: 'NOT_REVIEW_ELIGIBLE'
+        })
+      }
+
+      // A delivered order normally always has a delivery row, but an order
+      // settled some other way would not — there is nobody to rate then.
+      if (!order.rider_id) {
+        await client.query('ROLLBACK')
+
+        return res.status(409).json({
+          error: 'No rider is recorded for this order.',
+          code: 'NO_RIDER_ON_ORDER'
+        })
+      }
+
+      const existingReview = await client.query(
+        'SELECT id FROM rider_reviews WHERE order_id = $1',
+        [orderId]
+      )
+
+      if (existingReview.rows.length > 0) {
+        await client.query('ROLLBACK')
+
+        return res.status(409).json({
+          error: 'You have already rated the rider for this order.',
+          code: 'ALREADY_REVIEWED'
+        })
+      }
+
+      const reviewResult = await client.query(
+        `
+          INSERT INTO rider_reviews
+            (order_id, rider_id, rating, comment)
+          VALUES
+            ($1, $2, $3, $4)
+          RETURNING id, order_id, rider_id, rating, comment, created_at
+        `,
+        [orderId, order.rider_id, parsedRating, trimmedComment]
+      )
+
+      await client.query('COMMIT')
+
+      res.status(201).json({
+        rider_review: reviewResult.rows[0],
+        message: 'Thanks — your rider feedback goes to the Cravio team.'
+      })
+
+    } catch (error) {
+      await client.query('ROLLBACK')
+
+      console.error('Create rider review error:', error)
+
+      res.status(500).json({
+        error: 'Server error saving rider review.'
+      })
+
+    } finally {
+      client.release()
+    }
+  }
+)
+
+
+// ============================================================
 // GET /api/reviews/restaurants/:restaurantId
 // Public
 // Reviews for one restaurant, newest first, plus the rating summary.

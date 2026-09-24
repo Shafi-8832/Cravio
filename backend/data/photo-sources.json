@@ -66,6 +66,30 @@
       "image_source_url": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877",
       "image_credit": "Unsplash contributor \u00b7 illustrative sample photo",
       "image_is_illustrative": true
+    },
+    {
+      "file": "images/role-customer-spread.jpg",
+      "download_url": null,
+      "image_url": "/media/role-customer-spread.jpg",
+      "image_source_url": null,
+      "image_credit": "Supplied by the Cravio team \u00b7 illustrative role photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/role-rider-bag.jpg",
+      "download_url": null,
+      "image_url": "/media/role-rider-bag.jpg",
+      "image_source_url": null,
+      "image_credit": "Supplied by the Cravio team \u00b7 illustrative role photo",
+      "image_is_illustrative": true
+    },
+    {
+      "file": "images/role-owner.jpg",
+      "download_url": "https://images.unsplash.com/photo-1761095596765-c8abe01d3aea?q=85&fm=jpg&w=1600",
+      "image_url": "/media/role-owner.jpg",
+      "image_source_url": "https://unsplash.com/photos/bXOHW6fKdPI",
+      "image_credit": "Madeline Liu / Unsplash \u00b7 illustrative role photo (cropped to landscape)",
+      "image_is_illustrative": true
     }
   ]
 }

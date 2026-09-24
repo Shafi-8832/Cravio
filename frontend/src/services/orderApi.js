@@ -1,6 +1,10 @@
 import api from '../utils/api'
 export const cancelOrder = id => api.patch('/api/orders/' + id + '/cancel')
 export const reviewOrder = (id, payload) => api.post('/api/reviews/orders/' + id, payload)
+// Stars + comment about the rider. Write-only from the customer's side:
+// nothing a customer, owner or rider can call reads it back — only the
+// admin panel does, through getRiderReviews in adminApi.js.
+export const reviewRider = (id, payload) => api.post('/api/reviews/orders/' + id + '/rider', payload)
 export const submitPaymentReference = (id, transaction_ref) => api.post('/api/payments/' + id + '/reference', { transaction_ref })
 export const verifyPayment = id => api.patch('/api/payments/' + id + '/status', { status: 'paid' })
 

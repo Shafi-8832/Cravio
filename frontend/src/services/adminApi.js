@@ -21,3 +21,10 @@ export const getStats = () => {
 export const getPlatformAnalytics = (range = {}) => {
     return api.get('/api/admin/analytics', { params: range })
 }
+
+
+// Rider feedback written by customers. Admin only — this is the single
+// endpoint anywhere in the API that returns the contents of rider_reviews.
+export const getRiderReviews = (params = {}) => {
+    return api.get('/api/admin/rider-reviews', { params })
+}

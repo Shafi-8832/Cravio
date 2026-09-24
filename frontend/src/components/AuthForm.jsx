@@ -74,7 +74,24 @@ export default function AuthForm({ role, signup = false }) {
           <h2 className="text-4xl leading-tight font-extrabold">{signup ? role.signupTitle : role.loginTitle}</h2>
           <p className="text-sm muted mt-4">{role.blurb}</p>
         </div>
-        <FoodImage src={role.photo} alt={role.photoAlt} className="w-full h-56 object-cover rounded-2xl my-8" eager />
+        {/* The photo fills the panel's spare height. A photo that must stay whole
+            ('contain') is drawn at its own shape and centred, so no filler strips
+            appear beside it; the others are cropped to fill the full width. */}
+        {role.photoFit === 'contain'
+          ? <div className="relative w-full h-0 flex-1 min-h-56 my-8">
+              {/* inset-0 + m-auto centres the photo; max-w/max-h shrink it to fit
+                  while keeping its shape, whether it is tall or wide. */}
+              <FoodImage
+                src={role.photo}
+                alt={role.photoAlt}
+                className="absolute inset-0 m-auto max-h-full max-w-full rounded-2xl"
+                eager />
+            </div>
+          : <FoodImage
+              src={role.photo}
+              alt={role.photoAlt}
+              className="w-full h-0 flex-1 min-h-56 object-cover rounded-2xl my-8"
+              eager />}
         <ul className="space-y-2">
           {role.perks.map(perk => <li key={perk} className="text-sm font-semibold flex items-center gap-2">
             <span className={'w-5 h-5 rounded-full grid place-items-center text-[11px] ' + accent.chip}>✓</span>{perk}
