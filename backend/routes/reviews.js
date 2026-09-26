@@ -69,6 +69,9 @@ router.post(
       await client.query('BEGIN')
 
       // FOR UPDATE so two submissions racing on the same order can't both
+      // FOR UPDATE means that the row is locked for the duration of the transaction, s
+      // o if two requests try to create a review for the same order at the same time, 
+      // one will wait until the other finishes. This prevents race conditions where both requests might pass the checks and create duplicate reviews.
       // pass the "already reviewed" check below.
       const orderResult = await client.query(
         `
@@ -88,20 +91,33 @@ router.post(
         await client.query('ROLLBACK')
 
         return res.status(404).json({
-          error: 'Order not found.'
+          error: 'Order not found.' // without order, no review canbe created 
         })
       }
 
       const order = orderResult.rows[0]
 
+      // order.customer_id from database
+      // req.user.id from the authenticated user making the request
+      // If they don't match, the user is trying to review someone else's order.
+
+      // without this object-level ownership check, any logged in customer (passed the authenticateToken and requireRole middlewares)
+      // could POST /api/reviews/orders/:orderId with any orderId, and review someone else's order
+      // Role Checking (you are a customer) is not enough, being a customer does not mean THIS customer.
+
+
+      // req.user is authenticated
+      // req.params came from the URL, never trust the URL !
+
+
       if (order.customer_id !== req.user.id) {
         await client.query('ROLLBACK')
 
         return res.status(403).json({
-          error: 'You can only review your own orders.'
+          error: 'You can only review your own orders.' // basically the error message 
         })
       }
-
+      // business rule : delivered & review_eligible ? --> allow review, else 409
       if (!order.review_eligible || order.status !== 'delivered') {
         await client.query('ROLLBACK')
 

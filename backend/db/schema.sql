@@ -594,6 +594,13 @@ CREATE TABLE deliveries (
 -- 15. RESTAURANT REVIEWS
 -- ============================================================
 
+
+-- example : review id = 88 --> (functionally determines) --> order_id = 42
+-- JOIN orders ON PK = FK
+-- JOIN restaurant_branches ON PK = FK
+-- JOIN restaurants ON PK = FK
+-- now we have the restaurant_id & the owner_id !
+
 CREATE TABLE restaurant_reviews (
 
     id SERIAL PRIMARY KEY,
@@ -601,13 +608,13 @@ CREATE TABLE restaurant_reviews (
 
     order_id INTEGER
         REFERENCES orders(id)
-        UNIQUE,
+        UNIQUE, -- Unique because ONE REVIEW PER ORDER. not we hope with javascript validation, but enforced at the database level. This is important because the order is the only thing that guarantees a customer actually ate at this restaurant. Without it, a customer could review a restaurant they never ordered from.
 
-
+    -- the order already knows who/customer is (customer_id) and which branch/restaurant (branch_id --> restaurant_id), so we don't need to store them here. for 3NF
     -- customer_id INTEGER
     --     REFERENCES users(id),
 
-
+    -- for 3NF
     -- restaurant_id INTEGER
     --     REFERENCES restaurants(id),
 
