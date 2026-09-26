@@ -6,6 +6,8 @@ import OwnerAnalytics from '../components/OwnerAnalytics'
 import RestaurantSettings from '../components/RestaurantSettings'
 import OwnerItemEditor from '../components/OwnerItemEditor'
 import OrderReceipt from '../components/OrderReceipt'
+import BranchLocationEditor from '../components/map/BranchLocationEditor'
+import LiveTrackingMap from '../components/map/LiveTrackingMap'
 import { DIVISIONS } from '../utils/format'
 import {
   getMyRestaurants,
@@ -349,7 +351,7 @@ const OwnerDashboardPage = () => {
                       {selectedRestaurant.branches.map(b => (
                         <div
                           key={b.id}
-                          className="flex items-center justify-between border border-gray-100
+                          className="flex flex-wrap items-center justify-between border border-gray-100
                                      rounded-lg px-3 py-2"
                         >
                           <div>
@@ -368,6 +370,11 @@ const OwnerDashboardPage = () => {
                           >
                             {b.is_open ? 'Open' : 'Closed'}
                           </button>
+                          {/* Pickup pin for "near me" search and live tracking. */}
+                          <BranchLocationEditor
+                            branch={b}
+                            onSaved={async () => { await loadRestaurants(); flashNotice('Branch location saved.') }}
+                          />
                         </div>
                       ))}
                     </div>
@@ -633,6 +640,7 @@ const OwnerDashboardPage = () => {
                       </>
                     )}
                   </div>
+                  {expandedOrder === order.id && order.status === 'out_for_delivery' && <div className="w-full"><LiveTrackingMap orderId={order.id} /></div>}
                   {expandedOrder === order.id && <div className="w-full"><OrderReceipt id={order.id} onChanged={loadOrders} /></div>}
                 </div>
               ))}

@@ -2,7 +2,7 @@ const express = require('express')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
-const { parseId } = require('../utils/validation')
+const { parseId, parseCoordinates } = require('../utils/validation')
 const router = express.Router()
 router.use(authenticateToken, requireRole('rider'))
 
@@ -55,12 +55,56 @@ router.get('/deliveries/mine', async (req, res) => {
   const result = await pool.query(`SELECT d.id AS delivery_id,d.delivery_status,d.delivery_time,
       o.id AS order_id,o.status AS order_status,o.delivery_address,o.total_amount,o.delivery_fee,
       r.name AS restaurant_name,rb.address AS branch_address,rb.area AS branch_area,rb.city AS branch_city,
-      rb.phone AS branch_phone,u.name AS customer_name,u.phone AS customer_phone,p.method AS payment_method
+      rb.phone AS branch_phone,u.name AS customer_name,u.phone AS customer_phone,p.method AS payment_method,
+      rb.latitude::float8 AS branch_latitude,rb.longitude::float8 AS branch_longitude,
+      o.delivery_latitude::float8 AS delivery_latitude,o.delivery_longitude::float8 AS delivery_longitude
     FROM deliveries d JOIN orders o ON o.id=d.order_id
     JOIN restaurant_branches rb ON rb.id=o.branch_id JOIN restaurants r ON r.id=rb.restaurant_id
     JOIN users u ON u.id=o.customer_id JOIN payments p ON p.order_id=o.id
     WHERE d.rider_id=$1 ORDER BY o.created_at DESC LIMIT 100`, [req.user.id])
   res.json({ deliveries: result.rows })
+})
+
+// PUT /api/rider/location   body: { latitude, longitude, accuracy_m? }
+// Rider only (router.use above). The rider id is ALWAYS req.user.id from the
+// verified token — never from the body — so a rider can only move themselves.
+// PUT because the call replaces "where I am now" and repeating it is harmless.
+router.put('/location', async (req, res) => {
+  const point = parseCoordinates(req.body.latitude, req.body.longitude)
+  if (point.error) return res.status(400).json({ error: point.error })
+
+  let accuracy = null
+  if (req.body.accuracy_m !== undefined && req.body.accuracy_m !== null) {
+    accuracy = Number(req.body.accuracy_m)
+    // 999999.99 is the largest value NUMERIC(8,2) can hold.
+    if (typeof req.body.accuracy_m === 'boolean' || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 999999.99) {
+      return res.status(400).json({ error: 'accuracy_m must be a non-negative number of metres.' })
+    }
+  }
+
+  const client = await pool.connect()
+  try {
+    // Explicit transaction even though this is one statement: the upsert
+    // fires trg_log_rider_location, which writes delivery_location_log.
+    // Both tables must commit or roll back together.
+    await client.query('BEGIN')
+    // Upsert: the first position INSERTs the rider's row; every later one
+    // hits the PRIMARY KEY conflict and UPDATEs that same row instead.
+    // EXCLUDED is the row we tried to insert.
+    await client.query(`INSERT INTO rider_current_location (rider_id, latitude, longitude, accuracy_m, updated_at)
+      VALUES ($1, $2, $3, $4, now())
+      ON CONFLICT (rider_id) DO UPDATE
+      SET latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
+          accuracy_m = EXCLUDED.accuracy_m, updated_at = now()`,
+    [req.user.id, point.latitude, point.longitude, accuracy])
+    await client.query('COMMIT')
+    res.status(204).end()
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 })
 
 router.post('/deliveries/:orderId/accept', async (req, res) => {

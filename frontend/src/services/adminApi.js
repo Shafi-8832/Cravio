@@ -28,3 +28,10 @@ export const getPlatformAnalytics = (range = {}) => {
 export const getRiderReviews = (params = {}) => {
     return api.get('/api/admin/rider-reviews', { params })
 }
+
+
+// Every order currently out for delivery, with rider positions and counts.
+// Admin only; polled every 5 seconds by the Live deliveries page.
+export const getLiveDeliveries = () => {
+    return api.get('/api/admin/deliveries/live')
+}

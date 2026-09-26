@@ -22,3 +22,17 @@ export const getMyOrders = (params = {}) => {
 export const getOrderDetails = (orderId) => {
     return api.get(`/api/orders/${orderId}`)
 }
+
+
+// Live map data for one order. Polled every 5 seconds by LiveTrackingMap
+// while the order is out for delivery.
+export const getOrderTracking = (orderId) => {
+    return api.get(`/api/orders/${orderId}/tracking`)
+}
+
+
+// The planned road route for an order ({ routed, geometry, ... }). Fetched
+// ONCE when a tracking map opens; the server caches it in order_routes.
+export const getOrderRoute = (orderId) => {
+    return api.get(`/api/orders/${orderId}/route`)
+}

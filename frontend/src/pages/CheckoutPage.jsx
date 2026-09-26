@@ -7,6 +7,7 @@ import { getHealth, getPromos } from '../services/operationsApi'
 import { placeOrder } from '../services/orderApi'
 import FoodImage from '../components/FoodImage'
 import LoadingSpinner from '../components/LoadingSpinner'
+import LocationPicker from '../components/map/LocationPicker'
 import { money, errorMessage } from '../utils/format'
 
 export default function CheckoutPage() {
@@ -17,6 +18,9 @@ export default function CheckoutPage() {
   const [addresses, setAddresses] = useState([])
   const [addressId, setAddressId] = useState('')
   const [address, setAddress] = useState('')
+  // Optional drop-off pin { latitude, longitude }. Sent with the order and
+  // stored on it as a snapshot, so the rider and the live map know where to go.
+  const [pin, setPin] = useState(null)
   const [payment, setPayment] = useState('cash_on_delivery')
   const [manualEnabled, setManualEnabled] = useState(false)
   const [promos, setPromos] = useState([])
@@ -35,12 +39,14 @@ export default function CheckoutPage() {
         setBranches(open); setBranchId(String(open[0]?.id || ''))
         setAddresses(saved.data.addresses); setManualEnabled(health.data.manual_payments_enabled); setPromos(offers.data.promos)
         const preferred = saved.data.addresses.find(item => item.is_default)
-        if (preferred) { setAddressId(String(preferred.id)); setAddress(formatAddress(preferred)) }
+        if (preferred) { setAddressId(String(preferred.id)); setAddress(formatAddress(preferred)); setPin(addressPin(preferred)) }
       } catch (err) { if (active) setError(errorMessage(err)) }
       finally { if (active) setLoading(false) }
     }
     load(); return () => { active = false }
   }, [restaurant])
+  // A saved address may already carry coordinates; use them as the starting pin.
+  function addressPin(item) { return item.latitude !== null && item.latitude !== undefined ? { latitude: Number(item.latitude), longitude: Number(item.longitude) } : null }
   function formatAddress(item) { return [item.full_address, item.area, item.city, item.division, item.phone].filter(Boolean).join(', ') }
   const branch = branches.find(item => String(item.id) === branchId)
   const selectedAddress = addresses.find(item => String(item.id) === addressId)
@@ -52,7 +58,7 @@ export default function CheckoutPage() {
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError('')
     try {
-      const response = await placeOrder({ branch_id: Number(branchId), delivery_address: address.trim(), payment_method: payment, promo_code: code.trim().toUpperCase() || undefined })
+      const response = await placeOrder({ branch_id: Number(branchId), delivery_address: address.trim(), payment_method: payment, promo_code: code.trim().toUpperCase() || undefined, delivery_latitude: pin?.latitude, delivery_longitude: pin?.longitude })
       // Checkout has committed. Do not show a false failure if a later cart refresh fails.
       clearItems()
       navigate('/orders', { state: { justPlacedOrderId: response.data.order.id } })
@@ -66,9 +72,11 @@ export default function CheckoutPage() {
     <form onSubmit={submit} className="grid lg:grid-cols-[1.3fr_1fr] gap-7 items-start">
       <div className="space-y-5">
         <section className="surface p-6"><h2 className="text-xl font-bold mb-5">📍 Where should we deliver?</h2><label className="field-label" htmlFor="branch">Restaurant branch</label><select required id="branch" className="field mb-4" value={branchId} onChange={event => setBranchId(event.target.value)}>{!branches.length && <option value="">No open branches</option>}{branches.map(item => <option key={item.id} value={item.id}>{item.area}, {item.city} · {item.division}</option>)}</select>
-          {addresses.length > 0 && <><label className="field-label" htmlFor="saved-address">Saved address</label><select id="saved-address" className="field mb-4" value={addressId} onChange={event => { setAddressId(event.target.value); const item = addresses.find(value => String(value.id) === event.target.value); setAddress(item ? formatAddress(item) : '') }}><option value="">Use a different address</option>{addresses.map(item => <option key={item.id} value={item.id}>{item.label} · {item.area}, {item.city}</option>)}</select></>}
+          {addresses.length > 0 && <><label className="field-label" htmlFor="saved-address">Saved address</label><select id="saved-address" className="field mb-4" value={addressId} onChange={event => { setAddressId(event.target.value); const item = addresses.find(value => String(value.id) === event.target.value); setAddress(item ? formatAddress(item) : ''); if (item) setPin(addressPin(item)) }}><option value="">Use a different address</option>{addresses.map(item => <option key={item.id} value={item.id}>{item.label} · {item.area}, {item.city}</option>)}</select></>}
           <label className="field-label" htmlFor="delivery-address">Full address and contact number</label><textarea id="delivery-address" required minLength={5} maxLength={500} rows={4} className="field" placeholder="House, road, area, city, division and phone number" value={address} onChange={event => { setAddress(event.target.value); setAddressId('') }} />
           <Link to="/account" className="text-sm text-orange-700 inline-block mt-3">Manage saved addresses →</Link>
+          <p className="field-label mt-5">Drop-off pin <span className="muted font-normal">(optional — lets you follow the rider live)</span></p>
+          <LocationPicker value={pin} onChange={setPin} />
           {mismatch && <p className="notice-error mt-3">Choose a branch in the same division as your saved address.</p>}
           {branch && <p className="text-sm muted mt-3">Estimated delivery: {branch.eta_min}–{branch.eta_max} minutes. Nearby-restaurant routing is not enabled yet.</p>}
         </section>

@@ -91,3 +91,9 @@ export const replyToReview = (reviewId, reply) => {
 export const deleteReviewReply = (reviewId) => {
     return api.delete(`/api/owner/reviews/${reviewId}/reply`)
 }
+
+
+// Sets a branch's map pin. The server checks the branch belongs to you.
+export const setBranchLocation = (branchId, latitude, longitude) => {
+    return api.patch(`/api/restaurants/branches/${branchId}/location`, { latitude, longitude })
+}

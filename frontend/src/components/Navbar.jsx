@@ -30,6 +30,7 @@ export default function Navbar() {
           {/* Owners get their analytics one click away, not buried in a tab. */}
           {user?.role === 'restaurant_owner' && <NavLink to="/owner/analytics" className={activeClass}>Analytics</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin/analytics" className={activeClass}>Analytics</NavLink>}
+          {user?.role === 'admin' && <NavLink to="/admin/live" className={activeClass}>Live map</NavLink>}
           {user ? <>
             <Link to="/account" className="icon-button" aria-label="Your account" title={user.name}><Icon name="user" size={18} /></Link>
             <button onClick={handleLogout} className="hidden sm:flex icon-button" aria-label="Sign out" title="Sign out"><Icon name="logout" size={18} /></button>

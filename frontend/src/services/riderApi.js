@@ -21,3 +21,10 @@ export const acceptDelivery = (orderId) => {
 export const updateDeliveryStatus = (orderId, status) => {
     return api.patch(`/api/rider/deliveries/${orderId}/status`, { status })
 }
+
+
+// The rider's own GPS position. No rider id is sent: the server takes it
+// from the login token, so a rider can only ever move themselves.
+export const sendRiderLocation = (payload) => {
+    return api.put('/api/rider/location', payload)
+}

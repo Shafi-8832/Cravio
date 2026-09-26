@@ -5,6 +5,8 @@ async function runSequentially(jobs) {
 }
 
 const pool = require('../db/pool')
+const { parseCoordinates } = require('../utils/validation')
+const { getRoadRoute } = require('./routing')
 
 class OrderServiceError extends Error {
   constructor(status, code, message) {
@@ -445,6 +447,19 @@ const placeOrder = async (customerId, payload, database = pool) => {
     throw new OrderServiceError(409, 'PAYMENT_METHOD_DISABLED', 'Mobile payments are not enabled. Choose cash on delivery.')
   }
 
+  // The map pin is optional: checkout without one keeps working exactly as
+  // before. But if either coordinate is sent, both must be valid.
+  const isBlank = (value) => value === undefined || value === null || value === ''
+  let deliveryPoint = null
+
+  if (!isBlank(payload.delivery_latitude) || !isBlank(payload.delivery_longitude)) {
+    deliveryPoint = parseCoordinates(payload.delivery_latitude, payload.delivery_longitude)
+
+    if (deliveryPoint.error) {
+      throw new OrderServiceError(400, 'VALIDATION_ERROR', `Delivery pin: ${deliveryPoint.error}`)
+    }
+  }
+
   const client = await database.connect()
 
   try {
@@ -463,6 +478,23 @@ const placeOrder = async (customerId, payload, database = pool) => {
         promoCode
       ]
     )
+
+    // Snapshot the drop-off pin onto the new order, inside the SAME
+    // transaction as place_order(): if anything later fails, the order and
+    // its pin roll back together. Done here rather than by changing
+    // place_order()'s parameter list, which would leave the old 5-argument
+    // version behind as an ambiguous overload.
+    if (deliveryPoint) {
+      await client.query(
+        `
+          UPDATE orders
+          SET delivery_latitude = $1,
+              delivery_longitude = $2
+          WHERE id = $3
+        `,
+        [deliveryPoint.latitude, deliveryPoint.longitude, result.rows[0].order_id]
+      )
+    }
 
     const order = await getOrderDetailsWithDb(
       client,
@@ -795,9 +827,253 @@ const updateOrderStatus = async (
   }
 }
 
+// ============================================================
+// LIVE TRACKING
+// ============================================================
+
+// The only status in which a rider is carrying the food towards the
+// customer. Set when the rider marks the order picked up (routes/rider.js).
+const TRACKABLE_STATUS = 'out_for_delivery'
+
+// Loads one order together with the people connected to it, and throws
+// unless the caller is one of them. Shared by /tracking and /route so both
+// endpoints enforce exactly the same rule.
+//   - no such order                 -> 404
+//   - caller not connected to it    -> 403
+// The pickup and drop-off coordinates come along because /route needs them.
+const loadOrderForViewer = async (database, orderId, actor) => {
+  // Fetched first so a missing order (404) and somebody else's order (403)
+  // get different answers.
+  const accessResult = await database.query(
+    `
+      SELECT
+        o.status, o.customer_id, o.rider_id, r.owner_id,
+        rb.latitude::float8 AS restaurant_latitude,
+        rb.longitude::float8 AS restaurant_longitude,
+        o.delivery_latitude::float8 AS delivery_latitude,
+        o.delivery_longitude::float8 AS delivery_longitude
+      FROM orders o
+      JOIN restaurant_branches rb ON rb.id = o.branch_id
+      JOIN restaurants r ON r.id = rb.restaurant_id
+      WHERE o.id = $1
+    `,
+    [orderId]
+  )
+
+  if (accessResult.rows.length === 0) {
+    throw new OrderServiceError(404, 'ORDER_NOT_FOUND', 'Order not found.')
+  }
+
+  const order = accessResult.rows[0]
+
+  // Object-level check: four kinds of people may watch this order, each
+  // matched on the id from the verified token against the id stored on
+  // the order (or on its restaurant).
+  const allowed =
+    actor.role === 'admin' ||
+    (actor.role === 'customer' && order.customer_id === actor.id) ||
+    (actor.role === 'rider' && order.rider_id === actor.id) ||
+    (actor.role === 'restaurant_owner' && order.owner_id === actor.id)
+
+  if (!allowed) {
+    throw new OrderServiceError(403, 'ACCESS_DENIED', 'You are not allowed to track this order.')
+  }
+
+  return order
+}
+
+const getOrderTracking = async (orderIdValue, actor, database = pool) => {
+  const orderId = toPositiveInteger(orderIdValue, 'order id')
+
+  // Step 1 — 404 / 403 checks (see loadOrderForViewer above).
+  const access = await loadOrderForViewer(database, orderId, actor)
+
+  // Not on the road (yet, or any more). A delivered order in particular
+  // must NOT reveal where the rider is now — that would let a past
+  // customer keep following a rider around the city.
+  if (access.status !== TRACKABLE_STATUS) {
+    return { tracking_active: false, status: access.status }
+  }
+
+  // ------------------------------------------------------------
+  // Step 2 — GRADED COMPLEX QUERY: the live tracking snapshot.
+  // Joins orders, restaurant_branches, restaurants, users (the rider's
+  // name) and rider_current_location in one statement, and does ALL the
+  // maths in SQL:
+  //   - distance_remaining_km: our distance_km() function, rider -> drop-off
+  //   - eta_minutes: distance at an assumed 20 km/h, in minutes, rounded UP
+  //   - seconds_since_update / is_stale: how old the last GPS fix is
+  //
+  // LEFT JOIN on the rider and the location, because a rider who has not
+  // sent a position yet has no rider_current_location row; an inner join
+  // would make the whole order disappear. Their columns come back NULL
+  // instead, and distance_km() (STRICT) returns NULL for them too — as it
+  // does for an older order with no drop-off pin.
+  //
+  // The inner SELECT computes the distance once; the outer one reuses it
+  // for the ETA, since a SELECT cannot use its own column alias.
+  // is_stale is TRUE when the last fix is older than 60 seconds OR when
+  // there has never been one: either way the map cannot trust the marker.
+  // ::float8 makes pg send JSON numbers instead of NUMERIC strings.
+  // ------------------------------------------------------------
+  const trackingResult = await database.query(
+    `
+      SELECT
+        live.*,
+        -- ETA assumption: an average of 20 km/h in Dhaka traffic, over the
+        -- straight-line distance. km / (km per hour) = hours; * 60 = minutes;
+        -- CEIL rounds up so we never promise "0 minutes" too early.
+        CEIL(live.distance_remaining_km / 20.0 * 60)::int AS eta_minutes
+      FROM (
+        SELECT
+          o.id AS order_id,
+          o.status,
+          r.name AS restaurant_name,
+          rb.area AS branch_area,
+          rb.latitude::float8 AS restaurant_latitude,
+          rb.longitude::float8 AS restaurant_longitude,
+          o.delivery_latitude::float8 AS delivery_latitude,
+          o.delivery_longitude::float8 AS delivery_longitude,
+          rider.name AS rider_name,
+          loc.latitude::float8 AS rider_latitude,
+          loc.longitude::float8 AS rider_longitude,
+          loc.updated_at AS rider_updated_at,
+          distance_km(loc.latitude, loc.longitude,
+                      o.delivery_latitude, o.delivery_longitude)::float8 AS distance_remaining_km,
+          FLOOR(EXTRACT(EPOCH FROM now() - loc.updated_at))::int AS seconds_since_update,
+          COALESCE(now() - loc.updated_at > interval '60 seconds', true) AS is_stale
+        FROM orders o
+        JOIN restaurant_branches rb ON rb.id = o.branch_id
+        JOIN restaurants r ON r.id = rb.restaurant_id
+        LEFT JOIN users rider ON rider.id = o.rider_id
+        LEFT JOIN rider_current_location loc ON loc.rider_id = o.rider_id
+        WHERE o.id = $1
+      ) AS live
+    `,
+    [orderId]
+  )
+
+  // Step 3 — the breadcrumb trail, oldest point first so the Polyline is
+  // drawn in the order the rider drove it. The inner query keeps only the
+  // NEWEST 200 points (so a long ride cannot send an unbounded list); the
+  // outer query flips them back into time order.
+  const trailResult = await database.query(
+    `
+      SELECT latest.latitude, latest.longitude
+      FROM (
+        SELECT log_id, recorded_at, latitude::float8 AS latitude, longitude::float8 AS longitude
+        FROM delivery_location_log
+        WHERE order_id = $1
+        ORDER BY recorded_at DESC, log_id DESC
+        LIMIT 200
+      ) AS latest
+      ORDER BY latest.recorded_at, latest.log_id
+    `,
+    [orderId]
+  )
+
+  return {
+    tracking_active: true,
+    ...trackingResult.rows[0],
+    trail: trailResult.rows
+  }
+}
+
+// The planned ROAD route from the order's branch to its drop-off pin.
+// Called once when a tracking map opens (not on every 5-second poll).
+//
+//   cache hit  -> read the stored route from order_routes, no outside call
+//   cache miss -> ask OSRM, store the answer, return it
+//   OSRM down  -> straight-line fallback, NOT stored, so the next call retries
+const getOrderRoute = async (orderIdValue, actor, database = pool) => {
+  const orderId = toPositiveInteger(orderIdValue, 'order id')
+
+  // Same 404 / 403 rule as the tracking endpoint.
+  const order = await loadOrderForViewer(database, orderId, actor)
+
+  if (order.restaurant_latitude === null || order.delivery_latitude === null) {
+    return { routed: false, reason: 'missing_coordinates' }
+  }
+
+  // Cache hit? ::float8 so the numbers reach the browser as JSON numbers.
+  const cached = await database.query(
+    `
+      SELECT geometry, distance_m::float8 AS distance_m, duration_s::float8 AS duration_s
+      FROM order_routes
+      WHERE order_id = $1
+    `,
+    [orderId]
+  )
+
+  if (cached.rows.length > 0) {
+    return { routed: true, cached: true, ...cached.rows[0] }
+  }
+
+  // Cache miss: ask the routing engine. The HTTP call happens BEFORE the
+  // transaction opens, so no database connection is held while we wait
+  // up to 5 seconds for an outside server.
+  const route = await getRoadRoute(
+    order.restaurant_latitude, order.restaurant_longitude,
+    order.delivery_latitude, order.delivery_longitude
+  )
+
+  if (!route) {
+    return {
+      routed: false,
+      reason: 'routing_unavailable',
+      geometry: [
+        [order.restaurant_latitude, order.restaurant_longitude],
+        [order.delivery_latitude, order.delivery_longitude]
+      ]
+    }
+  }
+
+  const client = await database.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    // Two viewers can miss the cache at the same moment and both reach
+    // here. ON CONFLICT (order_id) DO NOTHING makes the second INSERT a
+    // harmless no-op instead of a primary-key error.
+    // JSON.stringify: pg would otherwise send a JS array as a PostgreSQL
+    // ARRAY, not as JSON.
+    await client.query(
+      `
+        INSERT INTO order_routes (order_id, geometry, distance_m, duration_s, source)
+        VALUES ($1, $2::jsonb, ROUND($3::numeric, 1), ROUND($4::numeric, 1), 'osrm')
+        ON CONFLICT (order_id) DO NOTHING
+      `,
+      [orderId, JSON.stringify(route.geometry), route.distance_m, route.duration_s]
+    )
+
+    // Read back whichever row won, ours or the other viewer's, so every
+    // caller gets the one stored route.
+    const stored = await client.query(
+      `
+        SELECT geometry, distance_m::float8 AS distance_m, duration_s::float8 AS duration_s
+        FROM order_routes
+        WHERE order_id = $1
+      `,
+      [orderId]
+    )
+
+    await client.query('COMMIT')
+
+    return { routed: true, cached: false, ...stored.rows[0] }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 module.exports = {
   ORDER_STATUSES,
   OrderServiceError,
+  getOrderRoute,
+  getOrderTracking,
   placeOrder,
   listCustomerOrders,
   listRestaurantOrders,

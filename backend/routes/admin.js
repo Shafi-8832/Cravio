@@ -209,6 +209,83 @@ router.get(
 
 
 // ============================================================
+// GET /api/admin/deliveries/live
+// admin only
+// Every order currently on the road, with where its rider is, how far
+// they still have to go, and whether their signal has gone quiet.
+// The admin page polls this every 5 seconds.
+// ============================================================
+router.get(
+  '/deliveries/live',
+  authenticateToken,
+  requireRole('admin'),
+  async (req, res) => {
+    try {
+      // ------------------------------------------------------------
+      // GRADED COMPLEX QUERY — live delivery board.
+      //
+      // Part 1, the CTE "live" (WITH ... AS): one row per order in
+      // 'out_for_delivery', joining orders -> restaurant_branches ->
+      // restaurants for the pickup, users for the rider's name and
+      // rider_current_location for their last GPS fix. The location is a
+      // LEFT JOIN so a rider who has never sent a position still shows up
+      // (as stale). Distance and staleness are computed here, in SQL.
+      //
+      // Part 2, the outer SELECT: AGGREGATES the CTE into exactly one row —
+      //   COUNT(*)                          = active deliveries
+      //   COUNT(DISTINCT rider_id) FILTER   = riders whose signal is stale
+      //   json_agg(...)                     = the rows themselves, as a JSON list
+      // Doing the counts in the same statement means the summary numbers
+      // and the list always describe the same instant.
+      // ------------------------------------------------------------
+      const result = await pool.query(`
+        WITH live AS (
+          SELECT
+            o.id AS order_id,
+            r.name AS restaurant_name,
+            rb.area AS branch_area,
+            rb.latitude::float8 AS restaurant_latitude,
+            rb.longitude::float8 AS restaurant_longitude,
+            o.delivery_latitude::float8 AS delivery_latitude,
+            o.delivery_longitude::float8 AS delivery_longitude,
+            rider.id AS rider_id,
+            rider.name AS rider_name,
+            loc.latitude::float8 AS rider_latitude,
+            loc.longitude::float8 AS rider_longitude,
+            loc.updated_at AS rider_updated_at,
+            FLOOR(EXTRACT(EPOCH FROM now() - loc.updated_at))::int AS seconds_since_update,
+            -- No fix at all counts as stale too: the map cannot trust it.
+            COALESCE(now() - loc.updated_at > interval '60 seconds', true) AS is_stale,
+            distance_km(loc.latitude, loc.longitude,
+                        o.delivery_latitude, o.delivery_longitude)::float8 AS distance_remaining_km
+          FROM orders o
+          JOIN restaurant_branches rb ON rb.id = o.branch_id
+          JOIN restaurants r ON r.id = rb.restaurant_id
+          LEFT JOIN users rider ON rider.id = o.rider_id
+          LEFT JOIN rider_current_location loc ON loc.rider_id = o.rider_id
+          WHERE o.status = 'out_for_delivery'
+        )
+        SELECT
+          COUNT(*)::int AS active_deliveries,
+          COUNT(DISTINCT live.rider_id) FILTER (WHERE live.is_stale)::int AS stale_riders,
+          COALESCE(json_agg(live ORDER BY live.order_id), '[]'::json) AS deliveries
+        FROM live
+      `)
+
+      res.json(result.rows[0])
+
+    } catch (error) {
+      console.error('Admin live deliveries error:', error)
+
+      res.status(500).json({
+        error: 'Server error fetching live deliveries.'
+      })
+    }
+  }
+)
+
+
+// ============================================================
 // GET /api/admin/rider-reviews?rider_id=&page=&limit=
 // admin only
 //

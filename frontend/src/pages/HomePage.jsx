@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import RestaurantCard from '../components/RestaurantCard'
 import Icon from '../components/Icon'
 import FoodImage from '../components/FoodImage'
+import NearbyRestaurants from '../components/map/NearbyRestaurants'
 import { listRestaurants } from '../services/restaurantApi'
 import { getFavorites, saveFavorite, removeFavorite } from '../services/accountApi'
 import { useAuth } from '../context/AuthContext'
@@ -25,6 +26,7 @@ export default function HomePage() {
   const [openOnly, setOpenOnly] = useState(false)
   const [sort, setSort] = useState('recommended')
   const [favorites, setFavorites] = useState([])
+  const [nearMe, setNearMe] = useState(false)
   const filterKey = JSON.stringify([division, query, cuisine, openOnly, sort])
   const [paging, setPaging] = useState({ key: '', page: 1 })
   const page = paging.key === filterKey ? paging.page : 1
@@ -113,7 +115,8 @@ export default function HomePage() {
         <label className="flex items-center gap-2 flex-1 min-w-[170px]"><Icon name="search" size={18} className="text-stone-400" /><span className="sr-only">Search restaurants or cuisine</span><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search restaurants or cuisine…" className="bg-transparent text-sm w-full py-2 outline-none" /></label>
         <label className="text-xs text-stone-500 flex items-center gap-2"><span>Sort by</span><select value={sort} onChange={event => setSort(event.target.value)} className="text-green-950 bg-stone-50 rounded-lg p-2 font-semibold"><option value="recommended">Recommended</option><option value="rating">Top rated</option><option value="name">Name A–Z</option></select></label>
       </div>
-      <div className="flex gap-2 flex-wrap items-center mb-6"><button onClick={() => setOpenOnly(!openOnly)} aria-pressed={openOnly} className={'pill border ' + (openOnly ? 'bg-green-900 text-white border-green-900' : 'bg-white border-stone-200 text-stone-600')}>🟢 Open now</button>{(division || cuisine || search) && <button className="pill bg-orange-50 text-orange-700" onClick={() => { setDivision(''); setCuisine(''); setSearch(''); setOpenOnly(false) }}>Clear filters ×</button>}<Link to="/directory" className="text-xs text-orange-700 font-bold ml-auto">📍 Search more real restaurants →</Link></div>
+      <div className="flex gap-2 flex-wrap items-center mb-6"><button onClick={() => setOpenOnly(!openOnly)} aria-pressed={openOnly} className={'pill border ' + (openOnly ? 'bg-green-900 text-white border-green-900' : 'bg-white border-stone-200 text-stone-600')}>🟢 Open now</button>{/* /nearby needs a login, so the button is only offered to signed-in users. */}{user && <button onClick={() => setNearMe(!nearMe)} aria-pressed={nearMe} className={'pill border ' + (nearMe ? 'bg-orange-600 text-white border-orange-600' : 'bg-white border-stone-200 text-stone-600')}>📍 Near me</button>}{(division || cuisine || search) && <button className="pill bg-orange-50 text-orange-700" onClick={() => { setDivision(''); setCuisine(''); setSearch(''); setOpenOnly(false) }}>Clear filters ×</button>}<Link to="/directory" className="text-xs text-orange-700 font-bold ml-auto">📍 Search more real restaurants →</Link></div>
+      {nearMe && <NearbyRestaurants />}
       {error && <div className="notice-error mb-5" role="alert">{error}<button onClick={() => setRetry(value => value + 1)} className="font-bold underline ml-3">Try again</button></div>}
       {loading ? <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5" aria-label="Loading restaurants">{[1, 2, 3, 4].map(item => <div key={item} className="surface h-[330px] animate-pulse"><div className="h-[200px] bg-stone-200/70 rounded-t-2xl" /><div className="h-5 bg-stone-100 m-5 rounded-lg" /><div className="h-3 bg-stone-100 mx-5 rounded-lg w-1/2" /></div>)}</div>
         : shown.length > 0 ? <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">{shown.map(restaurant => <RestaurantCard key={restaurant.id} restaurant={restaurant} favorite={favorites.includes(restaurant.id)} onFavorite={user?.role === 'customer' ? toggleFavorite : undefined} />)}</div>

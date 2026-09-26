@@ -2,7 +2,7 @@ const express = require('express')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
-const { parseId } = require('../utils/validation')
+const { parseId, parseCoordinates } = require('../utils/validation')
 
 const router = express.Router()
 
@@ -92,7 +92,11 @@ router.get(
                 'delivery_fee', rb.delivery_fee,
                 'min_order_amount', rb.min_order_amount,
                 'eta_min', rb.eta_min,
-                'eta_max', rb.eta_max
+                'eta_max', rb.eta_max,
+                -- ::float8 so the pin arrives as a JSON number, not the
+                -- string pg uses for NUMERIC.
+                'latitude', rb.latitude::float8,
+                'longitude', rb.longitude::float8
               ) ORDER BY rb.id
             ) FILTER (WHERE rb.id IS NOT NULL),
             '[]'
@@ -118,6 +122,93 @@ router.get(
     }
   }
 )
+
+
+// ============================================================
+// GET /api/restaurants/nearby?lat=&lng=&radius_km=
+// Any logged-in user
+// Branches within radius_km of the given point, closest first.
+// Declared BEFORE GET /:id, otherwise Express would treat "nearby" as an id.
+// ============================================================
+router.get('/nearby', authenticateToken, async (req, res) => {
+  const point = parseCoordinates(req.query.lat, req.query.lng)
+
+  if (point.error) {
+    return res.status(400).json({
+      error: `Invalid ?lat=&lng= point: ${point.error}`
+    })
+  }
+
+  // Default 5 km, at most 25 km — beyond that "near me" stops meaning
+  // anything in a city, and the result list would just be everything.
+  const radiusKm = req.query.radius_km === undefined || req.query.radius_km === ''
+    ? 5
+    : Number(req.query.radius_km)
+
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 25) {
+    return res.status(400).json({
+      error: 'radius_km must be a number greater than 0 and at most 25.'
+    })
+  }
+
+  try {
+    // ------------------------------------------------------------
+    // GRADED COMPLEX QUERY — "restaurants near me".
+    // Joins restaurant_branches with restaurants, computes the distance
+    // IN SQL with our own distance_km() function, filters by radius and
+    // sorts by distance.
+    //
+    // Why the inner SELECT? A WHERE clause cannot refer to a column alias
+    // defined in the same SELECT, so distance_km is computed once in the
+    // inner query and then filtered and sorted in the outer one.
+    //
+    // Rating comes from the stored r.avg_rating column (kept correct by
+    // trg_sync_restaurant_rating), not recomputed per row.
+    // ------------------------------------------------------------
+    const result = await pool.query(`
+      SELECT nearby.*
+      FROM (
+        SELECT
+          r.id AS restaurant_id,
+          r.name,
+          r.cuisine,
+          r.image_url,
+          r.logo_url,
+          r.ordering_enabled,
+          r.avg_rating::float8 AS avg_rating,
+          r.review_count,
+          rb.id AS branch_id,
+          rb.area,
+          rb.city,
+          rb.is_open,
+          rb.latitude::float8 AS latitude,
+          rb.longitude::float8 AS longitude,
+          distance_km($1, $2, rb.latitude, rb.longitude)::float8 AS distance_km
+        FROM restaurant_branches rb
+        JOIN restaurants r
+          ON r.id = rb.restaurant_id
+        WHERE rb.latitude IS NOT NULL
+          AND rb.longitude IS NOT NULL
+      ) AS nearby
+      WHERE nearby.distance_km <= $3
+      ORDER BY nearby.distance_km ASC, nearby.branch_id
+      LIMIT 100
+    `, [point.latitude, point.longitude, radiusKm])
+
+    res.json({
+      center: { latitude: point.latitude, longitude: point.longitude },
+      radius_km: radiusKm,
+      branches: result.rows
+    })
+
+  } catch (error) {
+    console.error('Nearby restaurants error:', error)
+
+    res.status(500).json({
+      error: 'Server error finding nearby restaurants.'
+    })
+  }
+})
 
 
 // ============================================================
@@ -437,6 +528,104 @@ router.patch(
 
       res.status(500).json({
         error: 'Server error toggling branch.'
+      })
+
+    } finally {
+      client.release()
+    }
+  }
+)
+
+
+// ============================================================
+// PATCH /api/restaurants/branches/:branchId/location
+// Owner of THIS branch's restaurant, or admin
+// Body: { latitude, longitude }
+// Sets the branch's map pin — the pickup point used by "near me" and by
+// live order tracking.
+// ============================================================
+router.patch(
+  '/branches/:branchId/location',
+  authenticateToken,
+  requireRole('restaurant_owner', 'admin'),
+  async (req, res) => {
+
+    const branchId = parseId(req.params.branchId)
+
+    if (branchId === null) {
+      return res.status(400).json({
+        error: 'Invalid branch ID.'
+      })
+    }
+
+    const point = parseCoordinates(req.body.latitude, req.body.longitude)
+
+    if (point.error) {
+      return res.status(400).json({
+        error: point.error
+      })
+    }
+
+    const client = await pool.connect()
+
+    try {
+      await client.query('BEGIN')
+
+      // Look the branch up WITH its owner first, so a missing branch (404)
+      // and someone else's branch (403) get different answers.
+      // FOR UPDATE OF rb locks just the branch row until COMMIT.
+      const branchResult = await client.query(`
+        SELECT rb.id, r.owner_id
+        FROM restaurant_branches rb
+        JOIN restaurants r
+          ON r.id = rb.restaurant_id
+        WHERE rb.id = $1
+        FOR UPDATE OF rb
+      `, [branchId])
+
+      if (branchResult.rows.length === 0) {
+        await client.query('ROLLBACK')
+
+        return res.status(404).json({
+          error: 'Branch not found.'
+        })
+      }
+
+      // Object-level ownership check: the owner id comes from the
+      // database row, the user id from the verified token.
+      if (
+        req.user.role !== 'admin' &&
+        branchResult.rows[0].owner_id !== req.user.id
+      ) {
+        await client.query('ROLLBACK')
+
+        return res.status(403).json({
+          error: 'You can only set the location of your own branches.'
+        })
+      }
+
+      const result = await client.query(`
+        UPDATE restaurant_branches
+        SET latitude = $1,
+            longitude = $2
+        WHERE id = $3
+        RETURNING id, latitude::float8 AS latitude, longitude::float8 AS longitude
+      `, [point.latitude, point.longitude, branchId])
+
+      await client.query('COMMIT')
+
+      res.json({
+        branch: result.rows[0],
+        message: 'Branch location saved.'
+      })
+
+    } catch (error) {
+      await client.query('ROLLBACK')
+
+      console.error('Set branch location error:', error)
+
+      res.status(500).json({
+        error: 'Server error saving branch location.'
       })
 
     } finally {

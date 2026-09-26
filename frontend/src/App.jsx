@@ -17,6 +17,7 @@ import OwnerReviewsPage from './pages/OwnerReviewsPage'
 import RiderDashboardPage from './pages/RiderDashboardPage'
 import AdminDashboardPage from './pages/AdminDashboardPage'
 import AdminAnalyticsPage from './pages/AdminAnalyticsPage'
+import AdminLiveDeliveriesPage from './pages/AdminLiveDeliveriesPage'
 
 function RoleRoute({ roles, children }) {
   const { user } = useAuth()
@@ -56,6 +57,7 @@ function AppRoutes() {
     <Route path="/rider" element={<RoleRoute roles={['rider']}><RiderDashboardPage /></RoleRoute>} />
     <Route path="/admin" element={<RoleRoute roles={['admin']}><AdminDashboardPage /></RoleRoute>} />
     <Route path="/admin/analytics" element={<RoleRoute roles={['admin']}><AdminAnalyticsPage /></RoleRoute>} />
+    <Route path="/admin/live" element={<RoleRoute roles={['admin']}><AdminLiveDeliveriesPage /></RoleRoute>} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes><Footer /></>
 }

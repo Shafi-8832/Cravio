@@ -1865,3 +1865,133 @@ receipt used to pick its rating from a dropdown reading "5 stars, 4 stars,
 …". It now uses the same `StarInput` component, and like the rider form it
 starts unrated rather than pre-filled at five — a rating the customer never
 chose is not a rating.
+
+
+### Map + live rider tracking
+
+**Files involved:**
+- `backend/db/migrations/008_live_tracking.sql` — new columns, CHECKs, `rider_current_location`, `delivery_location_log`, demo Dhaka pins
+- `backend/db/functions/live_tracking.sql` — `distance_km()` function, `log_rider_location()` + `trg_log_rider_location` trigger
+- `backend/utils/validation.js` — `parseCoordinates()`
+- `backend/routes/restaurants.js` — `GET /api/restaurants/nearby`, `PATCH /api/restaurants/branches/:branchId/location`
+- `backend/routes/rider.js` — `PUT /api/rider/location` (and coordinates in `GET /deliveries/mine`)
+- `backend/routes/orders.js`, `backend/services/orderService.js` — `GET /api/orders/:id/tracking`, drop-off pin at checkout
+- `backend/routes/admin.js` — `GET /api/admin/deliveries/live`
+- `backend/tests/tracking.js` — regression suite (45 checks)
+- `frontend/src/utils/leafletSetup.js`, `frontend/src/components/map/*` (`MapView`, `LocationPicker`, `LiveTrackingMap`, `RiderLocationSharing`, `NearbyRestaurants`, `BranchLocationEditor`)
+- `frontend/src/pages/AdminLiveDeliveriesPage.jsx`, and edits to `CheckoutPage`, `MyOrdersPage`, `RiderDashboardPage`, `OwnerDashboardPage`, `HomePage`, `AdminDashboardPage`, `Navbar`, `App.jsx`, and the matching `services/*Api.js`
+- Full explanation: `docs/live-tracking.md`
+
+**Flow (exam-level explanation):**
+
+A *latitude/longitude* is a pair of numbers that pins a point on Earth. A
+*trigger* is SQL the database runs by itself when a row changes. *Polling*
+means the browser asks the server again on a timer. *Leaflet* is a free map
+library; *OpenStreetMap* supplies the free map pictures.
+
+1. **Pins.** Each restaurant *branch* has a pin, because an order is placed at
+   one branch (`orders.branch_id`). The owner clicks "📍 Set location" in the
+   Restaurant studio, drops a pin, and the page sends
+   `PATCH /api/restaurants/branches/:id/location`. The server checks the login
+   (401), the role (403), the numbers (400), then — in a transaction — checks
+   that this branch's restaurant belongs to the logged-in owner (403) before
+   updating it.
+2. **Near me.** A signed-in user clicks "📍 Near me". The browser finds their
+   position and calls `GET /api/restaurants/nearby`. One SQL query computes the
+   distance to every pinned branch, keeps those within the radius and sorts
+   them closest first.
+3. **Checkout.** The customer may drop a delivery pin. `POST /api/orders` sends
+   it; inside the same transaction as `place_order()`, the server copies it
+   onto the order. It is a *snapshot*: editing the saved address later cannot
+   change where an order already on the road is going.
+4. **Rider shares location.** On an active job the rider presses "📡 Start
+   sharing". The browser's `watchPosition` reports GPS fixes; at most one every
+   5 seconds is sent to `PUT /api/rider/location`. The rider id is taken from
+   the login token, never from the body. In a transaction the server *upserts*
+   (insert or update) the rider's single row in `rider_current_location`.
+5. **The trigger logs the trail.** That write fires `trg_log_rider_location`,
+   which copies the position into `delivery_location_log` for every order the
+   rider is carrying in status `out_for_delivery` (the status set at pickup).
+   Both writes commit or roll back together.
+6. **Customer watches.** On `/orders`, an order that is out for delivery shows
+   a live map. Every 5 seconds it calls `GET /api/orders/:id/tracking`. Only
+   the order's customer, its rider, its restaurant's owner or an admin may call
+   it (403 otherwise). One SQL query returns the positions, distance left, ETA,
+   seconds since the last fix and whether the signal is stale. Polling stops
+   when the order is delivered or cancelled, and when the page is left.
+   Delivered orders never reveal the rider's current position.
+7. **Admin watches everyone.** `/admin/live` polls
+   `GET /api/admin/deliveries/live`: all riders on one map (grey = stale) plus
+   counts of active deliveries and stale riders.
+8. **Dev simulator.** In development builds only, "🧪 Simulate route" sends 30
+   straight-line points through the same real `PUT` endpoint, so the demo works
+   without walking around Dhaka.
+
+Key SQL:
+
+```sql
+-- distance_km(): the Haversine formula, great-circle distance in km.
+SELECT ROUND((2 * 6371 * asin(sqrt(LEAST(1,
+  power(sin(radians(p_lat2 - p_lat1) / 2), 2)
+  + cos(radians(p_lat1)) * cos(radians(p_lat2)) * power(sin(radians(p_lng2 - p_lng1) / 2), 2)
+))))::NUMERIC, 3);
+```
+Treats the Earth as a ball of radius 6371 km and measures along its surface;
+`IMMUTABLE STRICT` so it can be cached and returns NULL for any missing point.
+
+```sql
+-- Trigger body: log the new position for every order the rider is carrying.
+INSERT INTO delivery_location_log (order_id, rider_id, latitude, longitude, recorded_at)
+SELECT o.id, NEW.rider_id, NEW.latitude, NEW.longitude, NEW.updated_at
+FROM orders o
+WHERE o.rider_id = NEW.rider_id AND o.status = 'out_for_delivery';
+```
+One INSERT ... SELECT handles zero, one or many active orders, and as a
+trigger it is guaranteed to run whichever code moves the rider.
+
+```sql
+-- Rider upsert: one row per rider, overwritten on every GPS report.
+INSERT INTO rider_current_location (rider_id, latitude, longitude, accuracy_m, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (rider_id) DO UPDATE SET latitude = EXCLUDED.latitude,
+  longitude = EXCLUDED.longitude, accuracy_m = EXCLUDED.accuracy_m, updated_at = now();
+```
+The PRIMARY KEY on rider_id turns a second insert into an update, so the table
+never grows; `$1` is the token's user id.
+
+```sql
+-- Nearby (complex query): distance in the inner query, filter + sort in the outer.
+SELECT nearby.* FROM (
+  SELECT r.name, rb.id AS branch_id, ..., distance_km($1, $2, rb.latitude, rb.longitude) AS distance_km
+  FROM restaurant_branches rb JOIN restaurants r ON r.id = rb.restaurant_id
+  WHERE rb.latitude IS NOT NULL AND rb.longitude IS NOT NULL
+) AS nearby
+WHERE nearby.distance_km <= $3 ORDER BY nearby.distance_km;
+```
+A WHERE cannot use a column alias from its own SELECT, hence the two levels.
+
+```sql
+-- Tracking (complex query): five tables, all maths in SQL.
+SELECT live.*, CEIL(live.distance_remaining_km / 20.0 * 60)::int AS eta_minutes
+FROM (SELECT ..., distance_km(loc.latitude, loc.longitude, o.delivery_latitude, o.delivery_longitude) AS distance_remaining_km,
+             FLOOR(EXTRACT(EPOCH FROM now() - loc.updated_at))::int AS seconds_since_update,
+             COALESCE(now() - loc.updated_at > interval '60 seconds', true) AS is_stale
+      FROM orders o JOIN restaurant_branches rb ON rb.id = o.branch_id
+      JOIN restaurants r ON r.id = rb.restaurant_id
+      LEFT JOIN users rider ON rider.id = o.rider_id
+      LEFT JOIN rider_current_location loc ON loc.rider_id = o.rider_id
+      WHERE o.id = $1) AS live;
+```
+LEFT JOINs keep the order visible even before the rider's first fix; the ETA
+assumes 20 km/h in Dhaka traffic and rounds up.
+
+```sql
+-- Admin board (complex query with aggregation): list and counts in one row.
+WITH live AS (/* same joins, every order out_for_delivery */)
+SELECT COUNT(*) AS active_deliveries,
+       COUNT(DISTINCT live.rider_id) FILTER (WHERE live.is_stale) AS stale_riders,
+       COALESCE(json_agg(live ORDER BY live.order_id), '[]'::json) AS deliveries
+FROM live;
+```
+A CTE names the per-delivery rows once; the outer SELECT aggregates them so
+the summary numbers and the list always describe the same instant.

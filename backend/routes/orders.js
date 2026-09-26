@@ -3,6 +3,8 @@ const authenticateToken = require('../middleware/auth')
 const requireRole = require('../middleware/roleCheck')
 const {
   OrderServiceError,
+  getOrderRoute,
+  getOrderTracking,
   placeOrder,
   listCustomerOrders,
   listRestaurantOrders,
@@ -83,6 +85,47 @@ router.get(
       return res.json(result)
     } catch (error) {
       return sendError(res, error, 'Get restaurant orders error:')
+    }
+  }
+)
+
+// ============================================================
+// GET /api/orders/:id/tracking
+// Live map data for one order. Every role may call it, but the service
+// then allows only the people connected to THIS order: its customer, its
+// assigned rider, the owner of its restaurant, or an admin (else 403).
+// The frontend polls this every 5 seconds while the order is on the road.
+// ============================================================
+router.get(
+  '/:id/tracking',
+  authenticateToken,
+  requireRole('customer', 'rider', 'restaurant_owner', 'admin'),
+  async (req, res) => {
+    try {
+      const tracking = await getOrderTracking(req.params.id, req.user)
+      return res.json({ tracking })
+    } catch (error) {
+      return sendError(res, error, 'Order tracking error:')
+    }
+  }
+)
+
+// ============================================================
+// GET /api/orders/:id/route
+// The planned road route (branch -> drop-off) for the tracking map.
+// Same people as /tracking may call it. The route is fetched from OSRM
+// once and cached in order_routes; the map asks for it once on load.
+// ============================================================
+router.get(
+  '/:id/route',
+  authenticateToken,
+  requireRole('customer', 'rider', 'restaurant_owner', 'admin'),
+  async (req, res) => {
+    try {
+      const route = await getOrderRoute(req.params.id, req.user)
+      return res.json({ route })
+    } catch (error) {
+      return sendError(res, error, 'Order route error:')
     }
   }
 )
