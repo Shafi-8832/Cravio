@@ -47,22 +47,29 @@ router.get('/restaurants/:restaurantId', async (req, res) => {
       ORDER BY name
     `, [restaurantId])
 
-    // Get all items
+    // Get all items. LEFT JOIN active_item_offers adds the sale price of any
+    // dish with an offer running now (NULL for the rest), so the menu shows
+    // exactly the price checkout will charge. price stays the normal price.
     const itemsResult = await pool.query(`
       SELECT
-        id,
-        category_id,
-        name,
-        description,
-        price,
-        image_url, image_credit, image_source_url, image_is_illustrative,
-        is_available,
-        is_veg,
-        quality_flag,
-        created_at
-      FROM menu_items
-      WHERE restaurant_id = $1
-      ORDER BY name
+        mi.id,
+        mi.category_id,
+        mi.name,
+        mi.description,
+        mi.price,
+        mi.image_url, mi.image_credit, mi.image_source_url, mi.image_is_illustrative,
+        mi.is_available,
+        mi.is_veg,
+        mi.quality_flag,
+        mi.created_at,
+        aio.discount_percent,
+        aio.discounted_price,
+        aio.ends_at AS offer_ends_at
+      FROM menu_items mi
+      LEFT JOIN active_item_offers aio
+        ON aio.item_id = mi.id
+      WHERE mi.restaurant_id = $1
+      ORDER BY mi.name
     `, [restaurantId])
 
     // Get every modifier group + option for this restaurant in one query.

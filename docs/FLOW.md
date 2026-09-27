@@ -2093,3 +2093,105 @@ FROM branches_by_distance($1, $2, $3);
 ```
 Parameterized (`$1` restaurant id, `$2` lat, `$3` lng); `::float8` makes the
 NUMERIC values arrive in JSON as numbers instead of strings.
+
+### Dynamic customer home page (offers carousel, deals and food rails)
+
+**Files involved:**
+- `backend/db/migrations/011_item_offers.sql` — `item_offers` table, CHECKs, index
+- `backend/db/functions/item_offers.sql` — `prevent_overlapping_item_offers()` + `trg_prevent_overlapping_item_offers`, view `active_item_offers`
+- `backend/db/seeds/demo_item_offers.sql`, `backend/scripts/seedOffers.js` — `npm run seed:offers`
+- `backend/db/functions/place_order.sql` — prices from `active_item_offers` at checkout
+- `backend/routes/home.js` (mounted at `/api/home` in `backend/server.js`), `backend/routes/cart.js`, `backend/routes/menu.js`
+- `frontend/src/services/homeApi.js`, `frontend/src/utils/time.js`, `frontend/src/components/home/*` (`HeroCarousel`, `HomeRails`, `Rail`, `HomeCards`, `useCustomerHome`, `useNow`), `frontend/src/pages/HomePage.jsx`, `frontend/src/pages/RestaurantPage.jsx`, `frontend/src/pages/CheckoutPage.jsx`, `frontend/src/index.css`
+- Full explanation: `docs/dynamic-home.md`
+
+**Flow (exam-level explanation):**
+
+A *view* is a saved SELECT used like a table. A *trigger* is SQL the database
+runs by itself when a row is written. A *LEFT JOIN* keeps a row even when the
+other table has no match (the missing side becomes NULL). *GROUP BY* folds many
+rows into one per group so COUNT/SUM/MAX can be used.
+
+1. **Offers are rows.** An owner's deal is a row in `item_offers`: dish,
+   percent, start, end. Before a row is stored, the trigger checks that the
+   same dish has no other offer in an overlapping time range, and raises an
+   error if it does.
+2. **"Running now" is a view.** `active_item_offers` keeps only offers that have
+   started and not ended, and computes the discounted price rounded to whole
+   taka. Every other part of the app reads offers through this view.
+3. **The customer opens the home page.** Five requests go out together:
+   banners, deals, popular, order-again, top-restaurants. Each needs a login
+   (401 otherwise). Grey placeholder cards show while they load.
+4. **Carousel.** `/banners` returns usable promo codes and the five biggest
+   deals. The slides alternate deal/promo, move every 3 seconds, stop while the
+   mouse is over them, and can be swiped on a phone.
+5. **Rails.** Deals (ending soonest first, with a live countdown that removes a
+   card when it hits zero), Popular right now (most ordered this week, topped
+   up with top-rated kitchens' dishes), Order again (this customer's
+   restaurants, newest first — customer role only, user id from the token),
+   Top rated (by stored average rating). An empty rail is hidden; a failed one
+   shows the server's message.
+6. **Click.** Every card opens that restaurant's menu, where the dish shows the
+   sale price and the old price struck through.
+7. **Checkout.** Inside the existing BEGIN/COMMIT, `place_order()` prices each
+   dish as `COALESCE(offer price, menu price)`, applies the promo code to that
+   discounted subtotal and stores the charged unit price in `order_items`. The
+   browser's numbers are never used.
+
+Key SQL:
+
+```sql
+-- Trigger body: is there another offer on this dish whose range overlaps?
+SELECT * INTO v_clash FROM item_offers io
+WHERE io.item_id = NEW.item_id AND io.offer_id <> NEW.offer_id
+  AND io.starts_at < NEW.ends_at AND NEW.starts_at < io.ends_at LIMIT 1;
+IF FOUND THEN RAISE EXCEPTION 'Menu item % already has offer % ...' USING ERRCODE = 'CRV02'; END IF;
+```
+Two ranges overlap when each starts before the other ends; `offer_id <> NEW.offer_id`
+stops an UPDATE from clashing with its own old version.
+
+```sql
+-- View: offers running now, with the price already computed.
+SELECT io.offer_id, io.item_id, mi.name AS item_name, ..., mi.price AS original_price, io.discount_percent,
+       ROUND(mi.price * (100 - io.discount_percent) / 100.0, 0)::NUMERIC(10,2) AS discounted_price, io.ends_at
+FROM item_offers io JOIN menu_items mi ON mi.id = io.item_id JOIN restaurants r ON r.id = mi.restaurant_id
+WHERE io.starts_at <= now() AND io.ends_at > now();
+```
+One definition of "active" and one price formula for the whole app.
+
+```sql
+-- Popular (complex): sales in the last 7 days, topped up from top-rated kitchens.
+WITH recent_sales AS (SELECT oi.menu_item_id, SUM(oi.quantity) AS ordered_qty
+                      FROM orders o JOIN order_items oi ON oi.order_id = o.id
+                      WHERE o.created_at >= now() - INTERVAL '7 days' AND o.status <> 'cancelled'
+                      GROUP BY oi.menu_item_id),
+     candidates AS (SELECT mi.*, r.avg_rating, COALESCE(rs.ordered_qty, 0) AS ordered_qty,
+                           ROW_NUMBER() OVER (PARTITION BY r.id ORDER BY COALESCE(rs.ordered_qty, 0) DESC, mi.price DESC) AS rank_in_restaurant
+                    FROM menu_items mi JOIN restaurants r ON r.id = mi.restaurant_id
+                    LEFT JOIN recent_sales rs ON rs.menu_item_id = mi.id
+                    WHERE mi.is_available AND r.ordering_enabled)
+SELECT c.*, aio.discounted_price FROM candidates c LEFT JOIN active_item_offers aio ON aio.item_id = c.item_id
+WHERE c.ordered_qty > 0 OR c.rank_in_restaurant <= 2
+ORDER BY c.ordered_qty DESC, c.avg_rating DESC NULLS LAST LIMIT 10;
+```
+Sold dishes sort first; the "top 2 dishes per restaurant" rows fill the remaining
+slots by restaurant rating, so the rail is never empty — all in one query.
+
+```sql
+-- Order again (complex + authorization): $1 is the token's user id.
+SELECT r.id, r.name, COUNT(o.id) AS order_count, MAX(o.created_at) AT TIME ZONE 'UTC' AS last_order_at
+FROM orders o JOIN restaurant_branches rb ON rb.id = o.branch_id JOIN restaurants r ON r.id = rb.restaurant_id
+WHERE o.customer_id = $1 AND o.status <> 'cancelled'
+GROUP BY r.id ORDER BY last_order_at DESC LIMIT 10;
+```
+Orders point at branches, so two joins reach the restaurant; GROUP BY folds all
+of a restaurant's orders into one row for COUNT and MAX.
+
+```sql
+-- Checkout (inside BEGIN/COMMIT): charge the offer price when one is running.
+SELECT ROUND(SUM((COALESCE(aio.discounted_price, mi.price) + line.modifier_total) * ci.quantity), 2)
+FROM cart_items ci JOIN menu_items mi ON mi.id = ci.menu_item_id
+LEFT JOIN active_item_offers aio ON aio.item_id = mi.id ...;
+```
+No running offer → the LEFT JOIN gives NULL → COALESCE uses the menu price; the
+promo code is then applied to this already-discounted subtotal.

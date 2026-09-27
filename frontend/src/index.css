@@ -54,6 +54,22 @@
 .order-step { position: relative; flex: 1; text-align: center; }
 .order-step:not(:last-child)::after { content: ''; position: absolute; top: 17px; height: 2px; background: #e7e5df; width: calc(100% - 40px); left: calc(50% + 20px); }
 .order-step.complete::after { background: #215d48; }
+/* Customer home: carousel + rails (scroll-snap rows, no carousel library). */
+.carousel-track, .rail-track { scrollbar-width: none; scroll-behavior: smooth; }
+.carousel-track::-webkit-scrollbar, .rail-track::-webkit-scrollbar { display: none; }
+.carousel-title { font-size: clamp(2rem, 3.6vw, 3.3rem); line-height: 1.08; font-weight: 800; letter-spacing: -.05em; color: #10251d; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.carousel-title.text-white { color: #fff; }
+.carousel-photo { border-radius: 50%; width: 330px; height: 330px; object-fit: cover; border: 14px solid #fffaf0; box-shadow: 0 20px 60px #566c3230; }
+.promo-ticket { border: 2px dashed #fdba74aa; border-radius: 22px; padding: 28px 26px; background: #ffffff0d; }
+/* Codes are up to 20 characters: shrink with the screen, and only wrap between characters if a long code really cannot fit. */
+.promo-code { font-size: clamp(1.6rem, 2.7vw, 2.3rem); font-weight: 800; letter-spacing: .08em; line-height: 1.15; overflow-wrap: anywhere; }
+.rail-arrow { width: 40px; height: 40px; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; background: #fff; border: 1px solid #e7e5e4; color: #14532d; transition: background-color .2s, border-color .2s; }
+.rail-arrow:hover { background: #fff7ed; border-color: #fdba74; }
+.home-card img { transition: transform .45s; }
+.home-card:hover img { transform: scale(1.05); }
+.home-card:focus-visible { outline: 2px solid #ea580c; outline-offset: 4px; border-radius: 18px; }
+.skeleton { background: linear-gradient(90deg, #ecebe3 25%, #f6f5ef 37%, #ecebe3 63%); background-size: 400% 100%; animation: skeleton-shimmer 1.4s ease infinite; }
+@keyframes skeleton-shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 @keyframes float-food { 0%, 100% { transform: translateY(0) rotate(-8deg); } 50% { transform: translateY(-12px) rotate(8deg); } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-@media (max-width: 767px) { .auth-layout { grid-template-columns: 1fr; } .auth-aside { display: none; } .hero-photo { width: 270px; height: 270px; border-width: 10px; } }
+@media (max-width: 767px) { .auth-layout { grid-template-columns: 1fr; } .auth-aside { display: none; } .hero-photo { width: 270px; height: 270px; border-width: 10px; } .carousel-photo { width: 200px; height: 200px; border-width: 8px; } }

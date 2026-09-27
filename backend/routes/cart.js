@@ -78,7 +78,13 @@ router.get(
           mi.id AS menu_item_id,
           mi.name,
           mi.description,
-          mi.price,
+          -- The price this line will be charged: the offer price if the dish
+          -- has an offer running now, else the menu price — the same COALESCE
+          -- place_order() uses at checkout. original_price is for the
+          -- strikethrough in the bag.
+          COALESCE(aio.discounted_price, mi.price) AS price,
+          mi.price AS original_price,
+          aio.discount_percent,
           mi.image_url,
           mi.is_available,
 
@@ -88,6 +94,9 @@ router.get(
 
         JOIN menu_items mi
           ON mi.id = ci.menu_item_id
+
+        LEFT JOIN active_item_offers aio
+          ON aio.item_id = mi.id
 
         WHERE ci.cart_id = $1
 

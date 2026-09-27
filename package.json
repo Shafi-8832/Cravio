@@ -14,7 +14,8 @@
     "test:backend": "node scripts/test-backend.js",
     "package:handoff": "python3 scripts/package-handoff.py",
     "seed:real": "npm --prefix backend run seed:real",
-    "dev3": "./dev3.sh"
+    "dev3": "./dev3.sh",
+    "seed:offers": "node backend/scripts/seedOffers.js"
   },
   "dependencies": {
     "uuid": "^14.0.2"

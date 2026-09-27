@@ -74,6 +74,14 @@ npm run seed:real
 
 `seed:real` imports **nine restaurants — Kacchi Bhai, KFC, BFC, Chillox, Sultan's Dine, Khana's, Domino's Pizza, Takeout and Fry Bucket — carrying 95 branches and 237 menu items** between them. Every restaurant has an outlet in all eight divisions (three or four in Dhaka), and the older sample restaurants are topped up to match. The source snapshots publish one record per outlet; `backend/scripts/buildBrandCatalog.js` folds each brand's outlets into a single restaurant with many branches, which is the shape the rest of the app expects. It uses the local files under `backend/data/images/`. Menus and branch details are snapshots of their published sources; the detail page links to those sources. No fake customer ratings are seeded.
 
+Then add the demo item offers that feed the customer home page (deals carousel and "Today's deals"):
+
+```bash
+npm run seed:offers
+```
+
+Offer times are relative to the moment you run it (some end within hours), so run it again right before a demo to refresh the countdowns. It only replaces the offers of the demo dishes it picks. See `docs/dynamic-home.md`.
+
 The import also creates one restaurant owner login per brand, using `BRAND_OWNER_PASSWORD` (or `DEMO_PASSWORD`) from `backend/.env`:
 
 | Brand | Owner email |
