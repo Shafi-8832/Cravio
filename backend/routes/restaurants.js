@@ -293,6 +293,321 @@ router.get('/:id', async (req, res) => {
 
 
 // ============================================================
+// GET /api/restaurants/:id/reviews/summary
+// [GRADED: auth] [GRADED: complex query]
+//
+// WHAT: returns the star breakdown for one restaurant — how many 1-star
+// reviews, how many 2-star, up to 5 — plus the total and the average.
+// WHY: the restaurant page wants to draw five bars. Sending the raw reviews
+// and counting them in the browser would (a) break the course rule that the
+// database does the aggregation, and (b) mean shipping every review just to
+// draw five numbers.
+// HOW IT FITS: the page's rating button calls this first, draws the bars from
+// it, and then calls the paginated list route below for the review text.
+//
+// authenticateToken is "middleware" — a function Express runs BEFORE this
+// handler. It checks the caller's token and either rejects the request or
+// attaches the verified account to req.user. Putting it here means an
+// anonymous caller never reaches the query.
+// ============================================================
+router.get('/:id/reviews/summary', authenticateToken, async (req, res) => {
+
+  // parseId turns the text from the URL into a positive integer, or null.
+  // Without it, "/api/restaurants/abc/reviews/summary" would hand "abc" to a
+  // query expecting an INTEGER and Postgres would raise an error we would
+  // surface as a 500 — a server fault — when the caller's request is what was
+  // malformed. 400 ("bad request") is the honest code for that.
+  const id = parseId(req.params.id)
+
+  if (id === null) {
+    return res.status(400).json({
+      error: 'Invalid restaurant ID.'
+    })
+  }
+
+  try {
+    // Existence check, deliberately its own query.
+    //
+    // WHY SEPARATE: the breakdown query below uses generate_series, so it
+    // ALWAYS returns five rows — one per star — even for a restaurant that
+    // does not exist. That means its result can never tell us apart
+    // "restaurant 999 is not real" from "restaurant 7 has no reviews yet".
+    // The first deserves 404 (nothing at this address); the second is a
+    // perfectly good 200 with five zeros. So we ask the question directly.
+    const exists = await pool.query(
+      'SELECT id FROM restaurants WHERE id = $1',
+      [id]
+    )
+
+    if (exists.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Restaurant not found.'
+      })
+    }
+
+    // [GRADED: complex query] The whole breakdown in ONE statement.
+    //
+    // Read it in three parts.
+    //
+    // 1. scoped_reviews (a CTE — a named temporary result used further down):
+    //    restaurant_reviews has no restaurant_id column of its own. A review
+    //    belongs to an order, and the order records which BRANCH it was placed
+    //    at, and a branch belongs to a restaurant. So reaching "this
+    //    restaurant's reviews" means walking review -> order -> branch. Both
+    //    are INNER JOINs because a review with no order, or an order with no
+    //    branch, is not a review of anything — those rows should disappear.
+    //    We stop at restaurant_branches rather than joining restaurants,
+    //    because restaurant_branches.restaurant_id already holds the value we
+    //    filter on; the extra hop would buy nothing here.
+    //
+    // 2. generate_series(1, 5) manufactures the five star levels as five rows.
+    //    LEFT JOIN (not INNER) is the point of the whole query: LEFT keeps
+    //    every row on the left even when nothing on the right matches, so a
+    //    star nobody has ever given still comes back with count 0. With INNER
+    //    JOIN that star would vanish and the UI would draw four bars for a
+    //    five-point scale.
+    //
+    // 3. GROUP BY stars.star collapses the joined rows into one row per star,
+    //    which is what COUNT then counts. COUNT(sr.rating) rather than
+    //    COUNT(*) matters: after a LEFT JOIN with no match, the right-hand
+    //    columns are NULL, and COUNT of a column skips NULLs — so an unused
+    //    star counts 0, whereas COUNT(*) would count the one phantom joined
+    //    row and report 1.
+    //
+    //    SUM(...) OVER () is a "window function": it runs after the grouping
+    //    and sums across all five result rows, giving each row the grand
+    //    total without a second query. The average is then the weighted mean
+    //    of the distribution — sum(star x count) / total — so the number in
+    //    the header and the bars underneath it are computed from the same
+    //    rows and can never disagree.
+    //
+    // $1 is a "placeholder": we send the SQL and the value separately, and
+    // Postgres treats the value strictly as data. If we pasted the id into
+    // the string instead, a caller could send text that ends the statement
+    // and starts another one — SQL injection. $1 here will contain the
+    // integer from the URL, e.g. 7.
+    //
+    // Example: a restaurant with two 5-star and one 3-star review returns
+    //   star 5 -> count 2, star 4 -> 0, star 3 -> 1, star 2 -> 0, star 1 -> 0
+    //   total_reviews 3, average_rating (5*2 + 3*1) / 3 = 4.33
+    const breakdown = await pool.query(`
+      WITH scoped_reviews AS (
+        SELECT rev.rating
+        FROM restaurant_reviews rev
+        JOIN orders o
+          ON o.id = rev.order_id
+        JOIN restaurant_branches b
+          ON b.id = o.branch_id
+        WHERE b.restaurant_id = $1
+      )
+      SELECT
+        stars.star::INTEGER AS star,
+        COUNT(sr.rating)::INTEGER AS review_count,
+        (SUM(COUNT(sr.rating)) OVER ())::INTEGER AS total_reviews,
+        ROUND(
+          100.0 * COUNT(sr.rating) / NULLIF(SUM(COUNT(sr.rating)) OVER (), 0),
+          1
+        ) AS share_pct,
+        ROUND(
+          SUM(stars.star * COUNT(sr.rating)) OVER ()
+            / NULLIF(SUM(COUNT(sr.rating)) OVER (), 0),
+          2
+        ) AS average_rating
+      FROM generate_series(1, 5) AS stars(star)
+      LEFT JOIN scoped_reviews sr
+        ON sr.rating = stars.star
+      GROUP BY stars.star
+      ORDER BY stars.star DESC
+    `, [id])
+
+    // NULLIF(total, 0) above returns NULL when there are no reviews at all,
+    // and anything divided by NULL is NULL — which is how we avoid dividing
+    // by zero. That means average_rating and share_pct arrive as null for an
+    // unreviewed restaurant, so we read them off the first row and let the
+    // client render "no reviews yet" rather than NaN.
+    const rows = breakdown.rows
+
+    res.json({
+      restaurant_id: id,
+      total_reviews: rows[0].total_reviews,
+      average_rating: rows[0].average_rating,
+      breakdown: rows
+    })
+
+  } catch (error) {
+    console.error('Review summary error:', error)
+
+    res.status(500).json({
+      error: 'Server error fetching the review summary.'
+    })
+  }
+})
+
+
+// ============================================================
+// GET /api/restaurants/:id/reviews?limit=10&offset=0
+// [GRADED: auth] [GRADED: complex query]
+//
+// WHAT: one page of that restaurant's reviews, newest first, with the
+// reviewer's display name.
+// WHY: a popular restaurant could have thousands of reviews. Returning them
+// all would be slow and would send data nobody scrolls to, so the caller asks
+// for a window of rows with limit (how many) and offset (how many to skip).
+// HOW IT FITS: the drawer calls this after the summary, and calls it again
+// with a larger offset each time the visitor presses "Load more".
+// ============================================================
+router.get('/:id/reviews', authenticateToken, async (req, res) => {
+
+  const id = parseId(req.params.id)
+
+  if (id === null) {
+    return res.status(400).json({
+      error: 'Invalid restaurant ID.'
+    })
+  }
+
+  // Pagination validation.
+  //
+  // WHY: limit and offset are pasted straight into a query that reads rows,
+  // so a caller could ask for limit=1000000 and make one request expensive
+  // for everyone. Capping it at 50 bounds the work a single request can
+  // cause. Rejecting non-numbers is separate from that: Number('abc') is NaN,
+  // and passing NaN to Postgres for an INTEGER would fail as a 500, when the
+  // real problem is the caller's input — hence 400, not 404: the address
+  // /api/restaurants/7/reviews is a real address, the query string is what
+  // was wrong.
+  const MAX_LIMIT = 50
+
+  const limit = req.query.limit === undefined ? 10 : Number(req.query.limit)
+  const offset = req.query.offset === undefined ? 0 : Number(req.query.offset)
+
+  if (!Number.isInteger(limit) || limit < 0 || limit > MAX_LIMIT) {
+    return res.status(400).json({
+      error: `limit must be a whole number between 0 and ${MAX_LIMIT}.`
+    })
+  }
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    return res.status(400).json({
+      error: 'offset must be a whole number of 0 or more.'
+    })
+  }
+
+  try {
+    // Same reasoning as the summary route: an empty page of reviews and a
+    // restaurant that does not exist both produce zero rows, so existence is
+    // asked separately to keep 404 and 200-with-nothing distinguishable.
+    const exists = await pool.query(
+      'SELECT id FROM restaurants WHERE id = $1',
+      [id]
+    )
+
+    if (exists.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Restaurant not found.'
+      })
+    }
+
+    // [GRADED: complex query] Four tables.
+    //
+    // The first three joins are the same review -> order -> branch walk the
+    // summary uses, for the same reason. The fourth, to users, is how we get
+    // the reviewer's name: the review does not store it, the ORDER stores
+    // customer_id, so the name lives one hop past the order. All four are
+    // INNER JOINs — a review whose order, branch or customer is missing is
+    // not displayable, so dropping those rows is correct.
+    //
+    // THE NAME IS TRIMMED IN SQL, ON PURPOSE. A review is public feedback,
+    // not an introduction, so the caller gets "Rahim K." and never the full
+    // name, the email or the user id. Doing it here rather than in JavaScript
+    // means the full name never leaves the database in the first place — you
+    // cannot leak a column you did not select.
+    //   split_part(u.name, ' ', 1) takes everything before the first space.
+    //   regexp_replace(btrim(u.name), '^.* ', '') strips everything up to the
+    //   LAST space, leaving the final word: the greedy .* deliberately eats as
+    //   much as it can before the final literal space. left(..., 1) is that
+    //   word's first letter.
+    //   The pattern uses a literal space rather than the \s shorthand on
+    //   purpose: this SQL lives in a JavaScript template literal, and
+    //   JavaScript would consume the single backslash before Postgres ever saw
+    //   it, turning \s into a plain "s" — which would then strip up to the last
+    //   letter s and turn 'Tanvir Ahmed Hossain' into 'Tanvir a.'.
+    //   strpos(...) > 0 asks "is there a space at all", so a single-word name
+    //   is returned unchanged instead of gaining a stray initial.
+    //
+    // Example: 'Tanvir Ahmed Hossain' -> 'Tanvir H.'
+    //          'Rahim Khan'           -> 'Rahim K.'
+    //          'Madonna'              -> 'Madonna'
+    //
+    // ORDER BY rev.created_at DESC is "newest first". rev.id DESC breaks ties:
+    // two reviews written in the same clock tick would otherwise come back in
+    // an arbitrary order, and an unstable order across pages can show the
+    // same review twice or skip one entirely as the offset moves.
+    //
+    // COUNT(*) OVER () is a window function again — it returns how many
+    // reviews the restaurant has IN TOTAL alongside this page of rows, so the
+    // client knows whether to keep showing "Load more" without us running a
+    // second counting query.
+    //
+    // $1 = restaurant id, $2 = how many rows to return (limit),
+    // $3 = how many to skip (offset). All three are sent as values, never
+    // spliced into the SQL text.
+    const reviews = await pool.query(`
+      SELECT
+        rev.id,
+        rev.rating,
+        rev.comment,
+        rev.created_at,
+        rev.owner_reply,
+        rev.owner_replied_at,
+        split_part(u.name, ' ', 1)
+          || CASE
+               WHEN strpos(btrim(u.name), ' ') > 0
+                 THEN ' ' || left(regexp_replace(btrim(u.name), '^.* ', ''), 1) || '.'
+               ELSE ''
+             END AS reviewer_name,
+        (COUNT(*) OVER ())::INTEGER AS total_reviews
+      FROM restaurant_reviews rev
+      JOIN orders o
+        ON o.id = rev.order_id
+      JOIN restaurant_branches b
+        ON b.id = o.branch_id
+      JOIN users u
+        ON u.id = o.customer_id
+      WHERE b.restaurant_id = $1
+      ORDER BY rev.created_at DESC, rev.id DESC
+      LIMIT $2 OFFSET $3
+    `, [id, limit, offset])
+
+    // COUNT(*) OVER () only exists on returned rows, so a page past the end
+    // comes back empty and has no total to read. Falling back to 0 keeps the
+    // response shape identical for every page.
+    const total = reviews.rows[0]?.total_reviews ?? 0
+
+    res.json({
+      reviews: reviews.rows,
+      pagination: {
+        total,
+        limit,
+        offset,
+        // Plain boolean so the client does not have to redo this arithmetic.
+        // Example: total 23, limit 10, offset 10 -> 10 + 10 = 20 < 23 -> true.
+        has_more: offset + reviews.rows.length < total
+      }
+    })
+
+  } catch (error) {
+    console.error('Restaurant reviews error:', error)
+
+    res.status(500).json({
+      error: 'Server error fetching reviews.'
+    })
+  }
+})
+
+
+
+// ============================================================
 // POST /api/restaurants
 // restaurant_owner or admin only
 // Creates a restaurant

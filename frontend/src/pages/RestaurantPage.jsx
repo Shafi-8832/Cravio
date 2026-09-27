@@ -6,6 +6,7 @@ import { getRestaurant, getRestaurantMenu, getRestaurantReviews } from '../servi
 import FoodImage from '../components/FoodImage'
 import LoadingSpinner from '../components/LoadingSpinner'
 import ModifierPicker from '../components/ModifierPicker'
+import ReviewsDrawer from '../components/ReviewsDrawer'
 import { money, errorMessage } from '../utils/format'
 
 export default function RestaurantPage() {
@@ -23,6 +24,9 @@ export default function RestaurantPage() {
   const [picker, setPicker] = useState(null)
   const [query, setQuery] = useState('')
   const [selectedBranchId, setSelectedBranchId] = useState(null)
+  // Whether the reviews drawer is open. The drawer fetches its own data, so
+  // this is the only state the page needs for it.
+  const [reviewsOpen, setReviewsOpen] = useState(false)
   useEffect(() => {
     let active = true
     async function load() {
@@ -62,7 +66,13 @@ export default function RestaurantPage() {
     <Link to="/" className="text-sm muted">← All restaurants</Link>
     <section className="surface overflow-hidden mt-5 grid md:grid-cols-[1fr_1fr]">
       <FoodImage eager src={restaurant.image_url} alt={restaurant.name + (restaurant.image_is_illustrative ? ' — illustrative food photo' : '')} className="w-full h-64 md:h-80 object-cover" />
-      <div className="p-7 md:p-10">{restaurant.logo_url && <FoodImage src={restaurant.logo_url} alt={restaurant.name + ' official logo'} className="w-20 h-20 object-contain rounded-xl bg-white border border-stone-100 mb-4" />}<p className="eyebrow mb-3">{restaurant.cuisine || 'Fresh from the kitchen'}</p><h1 className="text-3xl md:text-4xl font-extrabold">{restaurant.name}</h1><p className="text-sm muted mt-4 leading-relaxed">{restaurant.description}</p><p className="mt-4 font-semibold">⭐ {restaurant.average_rating ? Number(restaurant.average_rating).toFixed(1) + ' (' + restaurant.review_count + ' reviews)' : 'New · no reviews yet'}</p>
+      <div className="p-7 md:p-10">{restaurant.logo_url && <FoodImage src={restaurant.logo_url} alt={restaurant.name + ' official logo'} className="w-20 h-20 object-contain rounded-xl bg-white border border-stone-100 mb-4" />}<p className="eyebrow mb-3">{restaurant.cuisine || 'Fresh from the kitchen'}</p><h1 className="text-3xl md:text-4xl font-extrabold">{restaurant.name}</h1><p className="text-sm muted mt-4 leading-relaxed">{restaurant.description}</p>{/* With reviews the rating is a button that opens the drawer; with none
+            there is nothing to show, so it stays plain text and is not focusable. */}
+        {restaurant.review_count > 0
+          ? <button onClick={() => setReviewsOpen(true)} className="mt-4 font-semibold underline decoration-dotted underline-offset-4 hover:text-orange-700" aria-haspopup="dialog">
+            ⭐ {Number(restaurant.average_rating).toFixed(1)} ({restaurant.review_count} {restaurant.review_count === 1 ? 'review' : 'reviews'})
+          </button>
+          : <p className="mt-4 font-semibold">⭐ New · no reviews yet</p>}
         {restaurant.is_demo && <p className="pill bg-orange-50 text-orange-800 mt-4">Sample restaurant · test orders only</p>}
         {!restaurant.ordering_enabled && <p className="notice-error mt-4">Directory listing. This restaurant is not accepting Cravio orders.</p>}
         {restaurant.image_is_illustrative && <p className="text-xs muted mt-3">Illustrative photo, not this restaurant’s actual food.</p>}
@@ -110,5 +120,9 @@ export default function RestaurantPage() {
       </div>}</article>)}</div> : <p className="muted text-sm">{restaurant.ordering_enabled ? 'Be the first to review after your order is delivered.' : 'No Cravio delivery reviews yet.'}</p>}</section>
     {user?.role === 'customer' && itemCount > 0 && <div className="fixed bottom-5 inset-x-5 z-20 max-w-md mx-auto"><Link to="/checkout" className="btn-primary w-full shadow-xl !py-4"><span>🛍️ {itemCount} items · View checkout</span><span className="ml-auto">{money(cartTotal)}</span></Link></div>}
     {picker && <ModifierPicker item={picker} onCancel={() => setPicker(null)} onConfirm={ids => add(picker, ids)} />}
+    {reviewsOpen && <ReviewsDrawer
+      restaurantId={restaurant.id}
+      restaurantName={restaurant.name}
+      onClose={() => setReviewsOpen(false)} />}
   </main>
 }

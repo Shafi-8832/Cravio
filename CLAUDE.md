@@ -185,3 +185,5 @@ completely without looking anything up afterward. Rules:
 
 Update this file every time a feature is added or changed — never let
 it fall out of sync with the actual code.
+
+Never create branches. Work on the current branch only
