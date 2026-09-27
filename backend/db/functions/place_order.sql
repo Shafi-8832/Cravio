@@ -17,11 +17,25 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_owner
     ON restaurants(owner_id);
 
 
+-- The delivery pin used to be written by a separate UPDATE after this
+-- function returned. trg_validate_order_branch_range now checks the pin
+-- the moment the order row is INSERTed, so the pin must be part of that
+-- INSERT and therefore a parameter here.
+--
+-- Adding parameters creates a NEW function next to the old one (in
+-- PostgreSQL a function is identified by its name AND its parameter
+-- types). DROP the old 5-parameter version so there is exactly one
+-- place_order and no call can ever reach the version without a pin.
+DROP FUNCTION IF EXISTS place_order(INTEGER, INTEGER, TEXT, VARCHAR, VARCHAR);
+
 CREATE OR REPLACE FUNCTION place_order(
     p_customer_id INTEGER,
     p_branch_id INTEGER,
     p_delivery_address TEXT,
     p_payment_method VARCHAR(20),
+    -- Before p_promo_code because a parameter with a DEFAULT must come last.
+    p_delivery_latitude NUMERIC,
+    p_delivery_longitude NUMERIC,
     p_promo_code VARCHAR(20) DEFAULT NULL
 )
 RETURNS TABLE (
@@ -290,7 +304,9 @@ BEGIN
         discount_amount,
         total_amount,
         delivery_fee,
-        status
+        status,
+        delivery_latitude,
+        delivery_longitude
     )
     VALUES (
         p_customer_id,
@@ -301,7 +317,13 @@ BEGIN
         v_discount,
         v_total,
         v_delivery_fee,
-        'pending'
+        'pending',
+        -- The drop-off pin is a snapshot, like unit_price. The BEFORE INSERT
+        -- trigger trg_validate_order_branch_range checks it against the
+        -- branch's radius right here; if it fails, this whole function
+        -- (and the transaction around it) is rolled back.
+        p_delivery_latitude,
+        p_delivery_longitude
     )
     RETURNING id INTO v_order_id;
 

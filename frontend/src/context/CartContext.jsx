@@ -26,19 +26,36 @@ function CustomerCart({ user, children }) {
     setItems(response.data.cart)
     setError('')
     if (restaurantInfo) {
-      setRestaurant(restaurantInfo)
-      localStorage.setItem('cravio:cart:' + userId, JSON.stringify(restaurantInfo))
+      // Re-opening the same restaurant keeps the branch already chosen for
+      // this cart; opening a different restaurant starts with no branch.
+      setRestaurant(previous => ({ ...restaurantInfo, branch_id: previous?.id === restaurantInfo.id ? previous.branch_id ?? null : null }))
     }
-  }, [userId])
+  }, [])
+  // The cart is tied to ONE branch: { id, name, branch_id } is remembered
+  // per account so the choice survives a page reload.
   useEffect(() => {
-    if (!restaurant || user?.role !== 'customer') return
+    if (userId && restaurant) localStorage.setItem('cravio:cart:' + userId, JSON.stringify(restaurant))
+  }, [userId, restaurant])
+  // Choose the branch for this restaurant's cart. The menu belongs to the
+  // restaurant and is shared by all its branches (menu_items.restaurant_id),
+  // so switching branch keeps every item — no "your cart will be cleared"
+  // step is needed. restaurantId guards against a late answer for a
+  // restaurant the customer has already left.
+  const selectBranch = useCallback((restaurantId, branchId) => {
+    setRestaurant(previous => (previous && previous.id === restaurantId ? { ...previous, branch_id: branchId } : previous))
+  }, [])
+  // Depends on the restaurant's id only, so choosing a branch (which changes
+  // the restaurant object) does not re-download the cart.
+  const cartRestaurantId = restaurant?.id
+  useEffect(() => {
+    if (!cartRestaurantId || user?.role !== 'customer') return
     let active = true
-    getCart(restaurant.id).then(response => {
+    getCart(cartRestaurantId).then(response => {
       if (active) setItems(response.data.cart)
     }).catch(err => { if (active) setError(errorMessage(err, 'Could not restore your cart.')) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [restaurant, user?.role])
+  }, [cartRestaurantId, user?.role])
   const addItem = async (menuItem, id, modifierOptionIds = []) => {
     await addCartItem(id, menuItem.id, 1, modifierOptionIds)
     await fetchCart(id)
@@ -54,6 +71,6 @@ function CustomerCart({ user, children }) {
   const clearItems = () => setItems([])
   const itemCount = items.reduce((sum, item) => sum + Number(item.quantity), 0)
   const cartTotal = items.reduce((sum, item) => sum + Number(item.line_total ?? Number(item.unit_price ?? item.price) * item.quantity), 0)
-  return <CartContext.Provider value={{ restaurant, items, fetchCart, addItem, increaseItem, decreaseItem, removeItem, clearItems, itemCount, cartTotal, loading, error }}>{children}</CartContext.Provider>
+  return <CartContext.Provider value={{ restaurant, items, fetchCart, selectBranch, addItem, increaseItem, decreaseItem, removeItem, clearItems, itemCount, cartTotal, loading, error }}>{children}</CartContext.Provider>
 }
 export const useCart = () => useContext(CartContext)

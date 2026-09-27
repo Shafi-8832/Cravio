@@ -447,17 +447,16 @@ const placeOrder = async (customerId, payload, database = pool) => {
     throw new OrderServiceError(409, 'PAYMENT_METHOD_DISABLED', 'Mobile payments are not enabled. Choose cash on delivery.')
   }
 
-  // The map pin is optional: checkout without one keeps working exactly as
-  // before. But if either coordinate is sent, both must be valid.
-  const isBlank = (value) => value === undefined || value === null || value === ''
-  let deliveryPoint = null
+  // The delivery pin is REQUIRED: the branch is chosen by whether it can
+  // reach this point. Here we only check the input's shape (real numbers,
+  // in range) and answer 400 if it is wrong. Whether the branch can
+  // actually deliver there is NOT re-checked in JavaScript — the database
+  // trigger trg_validate_order_branch_range is the single place that rule
+  // lives.
+  const deliveryPoint = parseCoordinates(payload.delivery_latitude, payload.delivery_longitude)
 
-  if (!isBlank(payload.delivery_latitude) || !isBlank(payload.delivery_longitude)) {
-    deliveryPoint = parseCoordinates(payload.delivery_latitude, payload.delivery_longitude)
-
-    if (deliveryPoint.error) {
-      throw new OrderServiceError(400, 'VALIDATION_ERROR', `Delivery pin: ${deliveryPoint.error}`)
-    }
+  if (deliveryPoint.error) {
+    throw new OrderServiceError(400, 'VALIDATION_ERROR', `Delivery pin: ${deliveryPoint.error}`)
   }
 
   const client = await database.connect()
@@ -465,36 +464,23 @@ const placeOrder = async (customerId, payload, database = pool) => {
   try {
     await client.query('BEGIN')
 
+    // The pin goes INTO place_order(), so it is part of the order's INSERT
+    // and the BEFORE INSERT trigger can check it against the branch.
     const result = await client.query(
       `
         SELECT *
-        FROM place_order($1, $2, $3, $4, $5)
+        FROM place_order($1, $2, $3, $4, $5, $6, $7)
       `,
       [
         customerId,
         branchId,
         deliveryAddress,
         paymentMethod,
+        deliveryPoint.latitude,
+        deliveryPoint.longitude,
         promoCode
       ]
     )
-
-    // Snapshot the drop-off pin onto the new order, inside the SAME
-    // transaction as place_order(): if anything later fails, the order and
-    // its pin roll back together. Done here rather than by changing
-    // place_order()'s parameter list, which would leave the old 5-argument
-    // version behind as an ambiguous overload.
-    if (deliveryPoint) {
-      await client.query(
-        `
-          UPDATE orders
-          SET delivery_latitude = $1,
-              delivery_longitude = $2
-          WHERE id = $3
-        `,
-        [deliveryPoint.latitude, deliveryPoint.longitude, result.rows[0].order_id]
-      )
-    }
 
     const order = await getOrderDetailsWithDb(
       client,
@@ -509,6 +495,17 @@ const placeOrder = async (customerId, payload, database = pool) => {
     return order
   } catch (error) {
     await client.query('ROLLBACK')
+
+    // 'CRV01' is the SQLSTATE our branch-range trigger raises (branch
+    // closed, out of delivery range, ...). The request itself was well
+    // formed, but it conflicts with the current state of the data (where
+    // the branch is, its radius, its hours), so the answer is 409 Conflict.
+    // The trigger's message is written for customers, so it is passed on
+    // as-is; any other database error still goes through the usual mapping.
+    if (error.code === 'CRV01') {
+      throw new OrderServiceError(409, 'BRANCH_CANNOT_DELIVER', error.message)
+    }
+
     throw mapCheckoutError(error)
   } finally {
     client.release()

@@ -65,7 +65,10 @@ async function main() {
   const cart = (await call('GET', '/cart/' + rid, customer)).body.cart
   check('identical concurrent additions merge', cart.length, 1)
   check('both additions counted', cart[0].quantity, 2)
-  const placements = await Promise.all([1, 2].map(() => call('POST', '/orders', customer, { branch_id: branch.id, delivery_address: 'Test address with phone 01700000123', payment_method: 'cash_on_delivery' })))
+  // Orders need a delivery pin within the branch's radius, so the new
+  // branch gets a Dhanmondi pin and the order is sent to a point ~0.3 km away.
+  check('owner pins the branch', (await call('PATCH', `/restaurants/branches/${branch.id}/location`, owner, { latitude: 23.7465, longitude: 90.3760 })).status, 200)
+  const placements = await Promise.all([1, 2].map(() => call('POST', '/orders', customer, { branch_id: branch.id, delivery_address: 'Test address with phone 01700000123', payment_method: 'cash_on_delivery', delivery_latitude: 23.7490, delivery_longitude: 90.3770 })))
   check('only one concurrent checkout commits', placements.map(r => r.status).sort(), [201, 409])
   const order = placements.find(r => r.status === 201).body.order
   check('server includes branch fee', Number(order.total_amount), 565)

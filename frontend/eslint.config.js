@@ -22,7 +22,7 @@ export default defineConfig([
     files: ['src/context/*Context.jsx'],
     rules: {
       // Context modules intentionally export their provider and consumer hook.
-      'react-refresh/only-export-components': ['error', { allowExportNames: ['useAuth', 'useCart'] }],
+      'react-refresh/only-export-components': ['error', { allowExportNames: ['useAuth', 'useCart', 'useUserLocation'] }],
     },
   },
 ])

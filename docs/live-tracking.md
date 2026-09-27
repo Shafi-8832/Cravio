@@ -274,14 +274,15 @@ part of the customer's delivery.
    chosen saved address has coordinates, they become the starting pin.
 2. **Place order** sends `delivery_latitude` / `delivery_longitude` along with
    the existing fields to `POST /api/orders`.
-3. `orderService.placeOrder` validates them: both missing = fine (checkout
-   works exactly as before), one missing or invalid = 400.
+3. `orderService.placeOrder` validates them: missing, one missing or
+   invalid = 400. (Since the branch-selection feature the pin is
+   **required** — see `docs/branch-selection.md`.)
 4. Inside the **existing** transaction: `SELECT * FROM place_order(...)`
-   creates the order (unchanged), then
-   `UPDATE orders SET delivery_latitude=$1, delivery_longitude=$2 WHERE id=$3`
-   snapshots the pin, then `COMMIT`. If anything fails, both roll back.
-   (`place_order()` itself was not changed: adding parameters would leave the
-   old 5-argument version behind as an ambiguous overload.)
+   now receives the pin as two parameters and writes it in the order's
+   own INSERT, where the trigger `trg_validate_order_branch_range` checks
+   it against the branch's delivery radius. The old 5-argument
+   `place_order()` is dropped so there is only one version. If anything
+   fails, everything rolls back.
 
 ### 4.4 Rider: sharing location
 

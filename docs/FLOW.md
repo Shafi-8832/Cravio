@@ -1900,9 +1900,10 @@ library; *OpenStreetMap* supplies the free map pictures.
    position and calls `GET /api/restaurants/nearby`. One SQL query computes the
    distance to every pinned branch, keeps those within the radius and sorts
    them closest first.
-3. **Checkout.** The customer may drop a delivery pin. `POST /api/orders` sends
-   it; inside the same transaction as `place_order()`, the server copies it
-   onto the order. It is a *snapshot*: editing the saved address later cannot
+3. **Checkout.** The customer must drop a delivery pin. `POST /api/orders` sends
+   it; `place_order()` writes it in the order's own INSERT, inside the same
+   transaction (see "Automatic branch selection by location" below for the
+   range check). It is a *snapshot*: editing the saved address later cannot
    change where an order already on the road is going.
 4. **Rider shares location.** On an active job the rider presses "📡 Start
    sharing". The browser's `watchPosition` reports GPS fixes; at most one every
@@ -1995,3 +1996,100 @@ FROM live;
 ```
 A CTE names the per-delivery rows once; the outer SELECT aggregates them so
 the summary numbers and the list always describe the same instant.
+
+### Automatic branch selection by location
+
+**Files involved:**
+- `backend/db/migrations/010_branch_selection.sql` — `delivery_radius_km`, `opens_at`, `closes_at` + CHECKs, de-duplicated pins, demo hours
+- `backend/db/functions/restaurant_branches.sql` — `branch_is_open()`, `branches_by_distance()`, `validate_order_branch_range()` + `trg_validate_order_branch_range`
+- `backend/db/functions/place_order.sql` — takes the delivery pin and inserts it with the order
+- `backend/routes/restaurants.js` — `GET /api/restaurants/:id/branches`; `GET /api/restaurants/:id` returns hours-aware `is_open`
+- `backend/services/orderService.js` — pin required; SQLSTATE `CRV01` → 409
+- `backend/scripts/doctor.js`, `backend/tests/tracking.js`, `backend/tests/marketplace.js`, `backend/tests/e2e.js`
+- `frontend/src/context/LocationContext.jsx`, `frontend/src/context/CartContext.jsx`, `frontend/src/components/BranchSelector.jsx`, `frontend/src/pages/RestaurantPage.jsx`, `frontend/src/pages/CheckoutPage.jsx`, `frontend/src/components/map/NearbyRestaurants.jsx`, `frontend/src/services/restaurantApi.js`, `frontend/src/App.jsx`
+- Full explanation: `docs/branch-selection.md`
+
+**Flow (exam-level explanation):**
+
+A *branch* is one outlet of a restaurant. A *delivery radius* is how far, in
+km, a branch will deliver. A *function* is SQL stored in the database that
+returns a value or rows. A *trigger* is SQL the database runs by itself when a
+row is written. A *transaction* is a group of statements that all succeed
+(COMMIT) or are all undone (ROLLBACK).
+
+1. **Where is the customer?** The restaurant page asks the shared
+   `LocationContext`. The first time in a session it asks the browser for GPS;
+   if refused, it uses the customer's saved address that has a map pin. The
+   answer is remembered for the session, so no page asks twice.
+2. **Ask the server.** The page calls
+   `GET /api/restaurants/:id/branches?lat=&lng=`. The login check runs first
+   (401 without a token). Then the id and the numbers are checked (400 for
+   "abc", NaN, Infinity or out of range) and the restaurant must exist (404).
+3. **The database ranks the branches.** One query calls
+   `branches_by_distance()`. For each branch it measures the distance with
+   `distance_km()`, decides whether the branch is open (the owner's switch AND
+   the opening hours in Dhaka time), and whether it can deliver (open AND
+   within its radius). Rows come back "can deliver first, then nearest first".
+4. **Auto-select.** The first row that can deliver is `selected_branch_id`.
+   The page stores it in the cart and shows "Delivering from … · x km away ·
+   Change". "Change" lists every branch; closed or out-of-range ones are shown
+   but disabled. If none can deliver, the page says so and disables "Add".
+5. **Switching branch keeps the cart**, because the menu belongs to the
+   restaurant and every branch serves it.
+6. **Checkout.** The customer must set a delivery pin. Each time it moves, the
+   page asks `/branches` again from the PIN and, if the cart's branch cannot
+   reach it, offers to switch to the suggested branch.
+7. **Placing the order.** `POST /api/orders` opens a transaction and calls
+   `place_order()`, which inserts the order together with its pin.
+8. **The trigger is the final judge.** Just before the row is written,
+   `trg_validate_order_branch_range` checks the pin exists and the branch is
+   active, open, pinned and within range. If not, it raises an error with code
+   `CRV01`.
+9. **Rollback and 409.** The service runs ROLLBACK (the order and its items
+   disappear) and answers 409 Conflict with the trigger's message. The cart is
+   untouched, and the page shows the message.
+
+Key SQL:
+
+```sql
+-- branch_is_open(): open now, in Dhaka time? Handles overnight hours.
+SELECT CASE
+  WHEN p_opens IS NULL OR p_closes IS NULL THEN TRUE
+  WHEN p_opens < p_closes THEN t >= p_opens AND t < p_closes
+  ELSE t >= p_opens OR t < p_closes
+END FROM (SELECT (now() AT TIME ZONE 'Asia/Dhaka')::time AS t) AS dhaka;
+```
+The server clock is GMT, so it converts to Dhaka time first; for an overnight
+branch such as 18:00–02:00 it is open in the evening OR after midnight.
+
+```sql
+-- branches_by_distance(): distance + open + can_deliver, best first.
+SELECT b.*, (b.is_open AND b.distance_km <= b.delivery_radius_km) AS can_deliver
+FROM (SELECT rb.id AS branch_id, ..., distance_km(p_lat, p_lng, rb.latitude, rb.longitude) AS distance_km,
+             (COALESCE(rb.is_open, false) AND branch_is_open(rb.opens_at, rb.closes_at)) AS is_open
+      FROM restaurant_branches rb JOIN restaurants r ON r.id = rb.restaurant_id JOIN users u ON u.id = r.owner_id
+      WHERE rb.restaurant_id = p_restaurant_id AND r.ordering_enabled AND u.is_active AND rb.latitude IS NOT NULL) AS b
+ORDER BY can_deliver DESC, b.distance_km ASC, b.branch_id;
+```
+Joins three tables and computes the values in an inner query, because
+`can_deliver` reuses two computed columns and SQL cannot reuse an alias in the
+same SELECT list.
+
+```sql
+-- Trigger: validate the order's branch before the row is stored.
+CREATE TRIGGER trg_validate_order_branch_range
+BEFORE INSERT OR UPDATE OF branch_id, delivery_latitude, delivery_longitude
+ON orders FOR EACH ROW EXECUTE FUNCTION validate_order_branch_range();
+-- inside: IF distance_km(branch, NEW pin) > delivery_radius_km THEN
+--           RAISE EXCEPTION 'This branch doesn''t deliver ...' USING ERRCODE = 'CRV01';
+```
+BEFORE means a bad row is never written; listing only these columns means
+status changes (confirm, deliver, cancel) do not re-check old orders.
+
+```sql
+-- The API's query: the function does all the work.
+SELECT branch_id, branch_name, ..., distance_km::float8 AS distance_km, is_open, can_deliver
+FROM branches_by_distance($1, $2, $3);
+```
+Parameterized (`$1` restaurant id, `$2` lat, `$3` lng); `::float8` makes the
+NUMERIC values arrive in JSON as numbers instead of strings.

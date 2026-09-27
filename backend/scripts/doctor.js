@@ -12,7 +12,7 @@ async function doctor() {
     console.log('PASS PostgreSQL connection')
     const result = await pool.query(`SELECT to_regclass('public.users') AS users,
       to_regclass('public.schema_migrations') AS migrations,
-      to_regprocedure('public.place_order(integer,integer,text,character varying,character varying)') AS checkout`)
+      to_regprocedure('public.place_order(integer,integer,text,character varying,numeric,numeric,character varying)') AS checkout`)
     if (Object.values(result.rows[0]).some(value => !value)) throw new Error('Database setup is incomplete. Run npm run db:migrate.')
     console.log('PASS Base tables, migration ledger and checkout function')
     const migrations = await pool.query('SELECT name FROM schema_migrations ORDER BY name')
