@@ -2,7 +2,11 @@
 
 This document explains the map and live-tracking feature from end to end, in
 plain English. Read it top to bottom once and you should be able to explain
-any line of it in a viva.
+any line of it.
+
+The endpoints it describes are listed in [API.md](API.md), and its two SQL
+objects (`distance_km()` and `trg_log_rider_location`) in
+[DATABASE.md](DATABASE.md).
 
 ---
 

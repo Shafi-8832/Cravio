@@ -31,7 +31,9 @@ Each entry retains its own `source_url`, `menu_source_url`, `verified_at`, photo
 
 BFC/Chillox publish area names and coordinates in these pages without a full street-address field. Their directory addresses explicitly say **area-level listing; street address not supplied by this source**. Missing addresses and phone numbers were not guessed. KFC/Kacchi source details can themselves become outdated: recheck with the business before onboarding.
 
-The import produces **5,363 menu rows across branches**; many are repeated items at different branches, not 5,363 distinct dishes. BFC/Chillox entries use the lowest published variant price and describe that variant when supplied. Customizations, discounts and tax inclusions from external checkout are not replicated. All real restaurant Add buttons stay disabled until onboarding and current menu verification.
+The import produces **5,363 menu rows across branches**; many are repeated items at different branches, not 5,363 distinct dishes. BFC/Chillox entries use the lowest published variant price and describe that variant when supplied. Customizations, discounts and tax inclusions from external checkout are not replicated.
+
+**Two artefacts, two ordering states.** The four `official-*.json` snapshots described above keep `ordering_enabled: false` — they are the raw research record. The catalogue actually seeded by `npm run seed:real` is folded out of them by `backend/scripts/buildBrandCatalog.js`, which groups each brand's outlets into one restaurant and imports it with `ordering_enabled: true`, so the checkout, delivery and review lifecycle can be demonstrated end to end against a real menu. That is a coursework decision, not a merchant relationship: no order reaches a real restaurant and no money moves, and source links and photo credits stay on every page. Real merchant onboarding still needs the verification work in [REVIEW.md](REVIEW.md).
 
 ## Photos, logos and attribution
 

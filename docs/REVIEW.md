@@ -34,8 +34,10 @@ Shared frontend: cream, coral/orange and deep green styling; floating food emoji
 
 ## Verification performed
 
-- **116 backend integration assertions passed** against an isolated PostgreSQL 16 review database: 60 lifecycle/modifier/review assertions, 40 marketplace/auth/concurrency assertions and 16 operational dashboard/support/promo assertions.
-- **Six catalog/Places unit tests passed**, including all 139 catalog entries, every referenced local asset, eight divisions, non-orderable directory state, live import photo requirements, signed cursor/photo handling and server-side API-key isolation.
+- **The backend integration suites passed** against an isolated PostgreSQL 16 review database: `backend/tests/e2e.js` (order lifecycle, modifiers, reviews), `marketplace.js` (marketplace, auth, concurrency), `operations.js` (dashboards, support, promos) and `tracking.js` (branch pins, rider location, tracking authorization). Run them with `npm run test:backend` against a `TEST_DATABASE_URL` whose name ends in `_test` or `_review`; the harness refuses to target the application database.
+- **The catalog/Places unit tests passed** (`backend/tests/catalog.test.js`, `brandCatalog.test.js`): every catalog entry, every referenced local asset, eight divisions, directory state, live import photo requirements, signed cursor/photo handling and server-side API-key isolation. They use fixture responses and make no Google API calls.
+
+The counts in this section are from the review session that produced this document; re-run the suites for current numbers.
 - Frontend ESLint and production Vite build passed.
 - All **304 official photo/logo files** were downloaded and checked for an image MIME type. The 139-branch real catalog imported successfully into the separate preview database.
 - A desktop homepage and official restaurant detail page were visually inspected; real-name search, source links, logos, gallery and menu preview state were checked in the browser. The full mobile/browser interaction matrix and a live Google Places account have not been verified.
@@ -49,11 +51,13 @@ These are missing integrations or operational policies, not features implied to 
 
 1. **Verified merchant onboarding:** identity/business verification, approval and suspension policy, pairing existing directory entries with the true owner, approved photo rights, branch-specific current menus/taxes and order acceptance contracts. Public owner signup is a coursework workflow, not business verification.
 2. **Payment provider integration:** real bKash/Nagad/other checkout sessions, signature-verified webhooks, idempotent settlement, reconciliation, partial/full refunds, merchant payouts and rider cash remittance. Current summaries show gross recorded amounts/fees, not accounting profit or actual paid-out earnings.
-3. **Location and dispatch:** delivery zones, geocoding, road distance/ETA, live rider location, route tracking, assignment/redispatch and proof of delivery. Coordinates are stored but nearest-restaurant ordering is not implemented.
-4. **Identity and recovery:** email/phone verification, password reset/change and appropriate staff/admin account protection. The current browser token store is localStorage; harden session handling and add a restrictive deployment CSP before public operation.
+3. **Location and dispatch:** delivery zones, geocoding, automatic assignment/redispatch and proof of delivery. Branch map pins, "restaurants near me", rider GPS reporting, a live tracking map with distance/ETA and an admin live-delivery board are implemented — see [live-tracking.md](live-tracking.md). Road distance and duration come from the free public OSRM demo server, which is not a production dependency, and riders still claim jobs themselves rather than being dispatched.
+4. **Identity and recovery:** email/phone verification, password *reset* for a locked-out user (an authenticated password *change* exists, `PATCH /api/account/password`) and appropriate staff/admin account protection. The current browser token store is localStorage; harden session handling and add a restrictive deployment CSP before public operation.
 5. **Notifications and support operations:** email/SMS/push, durable event jobs/retries, support SLAs, escalation, cancellations after acceptance, refunds and dispute processes. In-app support tickets are present; outgoing communication is not configured.
 6. **Catalog completeness:** the official starter has 139 branches (four chains), not every restaurant or 60+ per area. Enable a permitted live directory and obtain owner submissions for the remaining coverage. Catalog snapshots need reviewed updates.
 7. **Business controls:** merchant/rider approval screens, scheduling/holidays, inventory/stock counts, variants with merchant-specific taxes, commissions/payout ledger, coupon abuse policies and full audit logs. Branch delivery settings are available on creation; a dedicated branch-settings editor is not included.
 8. **Deployment operations:** HTTPS, reverse-proxy configuration, shared rate limiting, managed secrets, backups/restore drills, monitoring, migrations in CI, object storage/image validation, dependency update checks, production terms/privacy and accessibility/device testing. No deployment was performed.
 
-This is a working local full-stack foundation and source handoff, with honest boundaries around the remaining external services and real-world operations.
+This is a working local full-stack foundation, with honest boundaries around the remaining external services and real-world operations.
+
+See also: [API.md](API.md) for the endpoint list and [DATABASE.md](DATABASE.md) for the schema and database objects.

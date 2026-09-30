@@ -48,8 +48,8 @@ const CHECKOUT_ERROR_MAP = {
   BRANCH_MINIMUM_NOT_MET: [409, 'BRANCH_MINIMUM_NOT_MET', 'The cart does not meet this branch minimum order amount.'],
   CUSTOMER_NOT_FOUND_OR_INVALID_ROLE: [
     403,
-    'CUSTOMER_REQUIRED',
-    'Only a valid customer account can place an order.'
+     'CUSTOMER_REQUIRED', // for frontend
+    'Only a valid customer account can place an order.' // for human
   ],
   BRANCH_NOT_FOUND: [
     404,
@@ -131,7 +131,7 @@ const CHECKOUT_ERROR_MAP = {
 // This is used to ensure that certain fields, such as order IDs or pagination parameters, 
 // are valid positive integers before proceeding with further processing.
 
-const toPositiveInteger = (value, fieldName) => {
+const toPositiveInteger = (value, fieldName) => { // /orders/abc123 => abc123 is not a positive integer, so throw an error
   const parsed = Number(value)
 
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -915,6 +915,8 @@ const getOrderTracking = async (orderIdValue, actor, database = pool) => {
   // is_stale is TRUE when the last fix is older than 60 seconds OR when
   // there has never been one: either way the map cannot trust the marker.
   // ::float8 makes pg send JSON numbers instead of NUMERIC strings.
+  
+  // why LEFT JOIN users? because a rider may have been deleted from the system, but the order still exists. We still want to show the order and its tracking info, even if the rider is no longer in the users table.
   // ------------------------------------------------------------
   const trackingResult = await database.query(
     `

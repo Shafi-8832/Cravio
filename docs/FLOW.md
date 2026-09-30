@@ -1,8 +1,13 @@
 # FLOW.md
 
-Feature-by-feature walkthroughs of Cravio, written to be read out loud in
-an evaluation without needing anything looked up afterwards. Every feature
-added or changed gets an entry here in the format below.
+Feature-by-feature walkthroughs of Cravio: what each feature does, in what
+order, and the SQL behind it. Every feature added or changed gets an entry
+here in the format below.
+
+For the shorter reference versions of the same material, see
+[API.md](API.md) (every endpoint, its auth and its role) and
+[DATABASE.md](DATABASE.md) (the schema and every trigger, function and
+procedure).
 
 ---
 
@@ -1892,7 +1897,7 @@ library; *OpenStreetMap* supplies the free map pictures.
 1. **Pins.** Each restaurant *branch* has a pin, because an order is placed at
    one branch (`orders.branch_id`). The owner clicks "📍 Set location" in the
    Restaurant studio, drops a pin, and the page sends
-   `PATCH /api/restaurants/branches/:id/location`. The server checks the login
+   `PATCH /api/restaurants/branches/:branchId/location`. The server checks the login
    (401), the role (403), the numbers (400), then — in a transaction — checks
    that this branch's restaurant belongs to the logged-in owner (403) before
    updating it.
