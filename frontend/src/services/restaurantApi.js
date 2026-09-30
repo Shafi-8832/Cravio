@@ -13,3 +13,6 @@ export const getReviewSummary = id => api.get(`/api/restaurants/${id}/reviews/su
 // by the server, so asking for more comes back as a 400 rather than a huge page.
 export const getReviewPage = (id, { limit = 10, offset = 0 } = {}) =>
   api.get(`/api/restaurants/${id}/reviews`, { params: { limit, offset } })
+// Every orderable branch of one restaurant measured from (lat, lng), best
+// first, plus selected_branch_id (nearest open branch that delivers there).
+export const getRestaurantBranches = (id, lat, lng) => api.get('/api/restaurants/' + id + '/branches', { params: { lat, lng } })

@@ -249,6 +249,10 @@ router.get('/:id', async (req, res) => {
 
     const restaurant = restaurantResult.rows[0]
 
+    // is_open here is what the CUSTOMER cares about: the owner's manual
+    // switch AND the opening hours (branch_is_open() in SQL), so a branch
+    // outside its hours is shown as closed. opens_at/closes_at and the
+    // radius are returned so the page can explain why.
     const branchesResult = await pool.query(`
       SELECT
         id,
@@ -259,7 +263,8 @@ router.get('/:id', async (req, res) => {
         latitude,
         longitude,
         division, delivery_fee, min_order_amount, eta_min, eta_max,
-        is_open
+        opens_at, closes_at, delivery_radius_km::float8 AS delivery_radius_km,
+        (COALESCE(is_open, false) AND branch_is_open(opens_at, closes_at)) AS is_open
       FROM restaurant_branches
       WHERE restaurant_id = $1
       ORDER BY city
@@ -605,6 +610,91 @@ router.get('/:id/reviews', authenticateToken, async (req, res) => {
   }
 })
 
+
+
+// ============================================================
+// GET /api/restaurants/:id/branches?lat=&lng=
+// Any logged-in user
+// Every orderable branch of this restaurant, measured from the given
+// point, best choice first, plus which one the app should auto-select.
+// ============================================================
+router.get('/:id/branches', authenticateToken, async (req, res) => {
+  // Validate the id and the point first, so bad input is a clear 400 and
+  // never reaches SQL. parseCoordinates rejects "abc", NaN, Infinity and
+  // out-of-range numbers.
+  const restaurantId = parseId(req.params.id)
+
+  if (restaurantId === null) {
+    return res.status(400).json({
+      error: 'Invalid restaurant ID.'
+    })
+  }
+
+  const point = parseCoordinates(req.query.lat, req.query.lng)
+
+  if (point.error) {
+    return res.status(400).json({
+      error: `Invalid ?lat=&lng= point: ${point.error}`
+    })
+  }
+
+  try {
+    // 404 for an unknown restaurant, instead of an empty list that would
+    // look like "no branch delivers to you".
+    const restaurantResult = await pool.query(
+      'SELECT id FROM restaurants WHERE id = $1',
+      [restaurantId]
+    )
+
+    if (restaurantResult.rows.length === 0) {
+      return res.status(404).json({
+        error: 'Restaurant not found.'
+      })
+    }
+
+    // ------------------------------------------------------------
+    // GRADED FUNCTION + COMPLEX QUERY — branches_by_distance().
+    // The function joins restaurant_branches, restaurants and users,
+    // computes each branch's distance with distance_km(), decides
+    // is_open / can_deliver, and sorts deliverable-and-nearest first.
+    // All of that happens in SQL; this route only reads the rows.
+    //
+    // ::float8 turns NUMERIC (sent by pg as a string) into JSON numbers.
+    // ------------------------------------------------------------
+    const result = await pool.query(`
+      SELECT
+        branch_id,
+        branch_name,
+        address,
+        latitude::float8 AS latitude,
+        longitude::float8 AS longitude,
+        distance_km::float8 AS distance_km,
+        delivery_radius_km::float8 AS delivery_radius_km,
+        is_open,
+        can_deliver
+      FROM branches_by_distance($1, $2, $3)
+    `, [restaurantId, point.latitude, point.longitude])
+
+    // The rows are already sorted can_deliver first, then nearest, so the
+    // branch to auto-select is simply the first one that can deliver.
+    // If none can, selected_branch_id is null and the page explains why.
+    const firstDeliverable = result.rows.find(branch => branch.can_deliver)
+
+    res.json({
+      restaurant_id: restaurantId,
+      location: { latitude: point.latitude, longitude: point.longitude },
+      selected_branch_id: firstDeliverable ? firstDeliverable.branch_id : null,
+      branches: result.rows
+    })
+
+  } catch (error) {
+    console.error('Branches by distance error:', error)
+
+    res.status(500).json({
+      error: 'Server error finding branches.'
+    })
+  }
+})
 
 
 // ============================================================

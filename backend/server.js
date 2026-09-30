@@ -77,6 +77,7 @@ app.use('/api/profile', require('./routes/profile'))
 app.use('/api/owner', require('./routes/owner'))
 app.use('/api/operations', require('./routes/operations'))
 app.use('/api/directory', require('./routes/directory'))
+app.use('/api/home', require('./routes/home'))
 
 app.get('/api/health', async (req, res) => {
   await pool.query('SELECT 1')

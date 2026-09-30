@@ -5,50 +5,47 @@ import MapView from './MapView'
 import { getNearbyRestaurants } from '../../services/restaurantApi'
 import { DHAKA_CENTER, restaurantIcon } from '../../utils/leafletSetup'
 import { errorMessage } from '../../utils/format'
-
-// Known before the first render, so it needs no effect.
-const HAS_GEOLOCATION = 'geolocation' in navigator
+import { useUserLocation } from '../../context/LocationContext'
 
 // "Near me": find the user's position, ask the server which branches are
 // within the chosen radius, and show them on a map and in a list. The
 // distances come from distance_km() in SQL — the browser only displays them.
+//
+// The position comes from the shared LocationContext, so opening this panel
+// and then a restaurant page asks for location permission only once.
 export default function NearbyRestaurants() {
-  // Without GPS support we go straight to Dhaka city centre.
-  const [center, setCenter] = useState(HAS_GEOLOCATION ? null : DHAKA_CENTER)
+  const { location, status, requestLocation } = useUserLocation()
   const [radiusKm, setRadiusKm] = useState(5)
   const [branches, setBranches] = useState([])
-  const [message, setMessage] = useState(HAS_GEOLOCATION
-    ? 'Finding your location…'
-    : 'This browser cannot share your location. Showing Dhaka city centre instead.')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Ask the browser for the position once, when the panel opens.
-  useEffect(() => {
-    if (!HAS_GEOLOCATION) return
-    navigator.geolocation.getCurrentPosition(
-      position => {
-        setMessage('')
-        setCenter([position.coords.latitude, position.coords.longitude])
-      },
-      geoError => {
-        setMessage(geoError.code === 1
-          ? 'Location permission was denied, so we are searching around Dhaka city centre instead.'
-          : 'Could not get your location, so we are searching around Dhaka city centre instead.')
-        setCenter(DHAKA_CENTER)
-      },
-      { timeout: 15000 }
-    )
-  }, [])
+  // Ask once, when the panel opens (does nothing if we already know).
+  useEffect(() => { requestLocation() }, [requestLocation])
+
+  // Without a location we search around Dhaka city centre instead.
+  let center = null
+  let message = 'Finding your location…'
+  if (location) {
+    center = [location.lat, location.lng]
+    message = location.source === 'address' ? 'Using your saved delivery address.' : location.source === 'pin' ? 'Using your last delivery pin.' : ''
+  } else if (status === 'unavailable') {
+    center = DHAKA_CENTER
+    message = 'Could not get your location (permission denied or unavailable), so we are searching around Dhaka city centre instead.'
+  }
+  // Plain numbers for the effect below: a new [lat, lng] array is created on
+  // every render, and depending on it would re-run the query forever.
+  const centerLat = center ? center[0] : null
+  const centerLng = center ? center[1] : null
 
   // Re-query whenever the centre or the radius changes.
   useEffect(() => {
-    if (!center) return
+    if (centerLat === null) return
     let active = true
     async function load() {
       setLoading(true)
       try {
-        const response = await getNearbyRestaurants(center[0], center[1], radiusKm)
+        const response = await getNearbyRestaurants(centerLat, centerLng, radiusKm)
         if (active) { setBranches(response.data.branches); setError('') }
       } catch (err) {
         if (active) setError(errorMessage(err, 'Could not find nearby restaurants.'))
@@ -58,7 +55,7 @@ export default function NearbyRestaurants() {
     }
     load()
     return () => { active = false }
-  }, [center, radiusKm])
+  }, [centerLat, centerLng, radiusKm])
 
   return (
     <section className="surface p-5 mb-6">

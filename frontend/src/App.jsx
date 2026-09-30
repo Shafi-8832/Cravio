@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { CartProvider } from './context/CartContext'
+import { LocationProvider } from './context/LocationContext'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import LoginPage from './pages/LoginPage'
@@ -62,5 +63,5 @@ function AppRoutes() {
   </Routes><Footer /></>
 }
 export default function App() {
-  return <BrowserRouter><AuthProvider><CartProvider><AppRoutes /></CartProvider></AuthProvider></BrowserRouter>
+  return <BrowserRouter><AuthProvider><LocationProvider><CartProvider><AppRoutes /></CartProvider></LocationProvider></AuthProvider></BrowserRouter>
 }

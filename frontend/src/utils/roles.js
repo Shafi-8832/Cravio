@@ -32,10 +32,13 @@ export const AUTH_ROLES = {
     loginSubtitle: 'Log in, go online and start claiming deliveries.',
     signupTitle: 'Join the delivery team.',
     signupSubtitle: 'Set up your rider profile and pick your vehicle.',
-    photo: '/media/role-rider-bag.jpg',
+    photo: '/media/role-rider-cravio-bag.jpg',
     photoAlt: 'A Cravio rider on a bicycle with a red delivery bag',
     // The whole rider must stay visible on the login/signup page, so it is fitted there, not cropped.
     photoFit: 'contain',
+    // The chooser card crops this photo (and zooms it on hover); anchor both to the
+    // top so the rider's head stays in frame.
+    photoPosition: 'object-top origin-top',
     accent: 'green',
     perks: ['Choose your own hours', 'See the fee before you accept', 'Cash on delivery settled for you'],
   },
@@ -49,8 +52,10 @@ export const AUTH_ROLES = {
     loginSubtitle: 'Log in to your kitchen dashboard.',
     signupTitle: 'Put your kitchen on Cravio.',
     signupSubtitle: 'Create an owner account and start building your menu.',
-    photo: '/media/dish-fried-chicken.jpg',
-    photoAlt: 'A restaurant kitchen dish',
+    photo: '/media/role-owner-brands.jpg',
+    photoAlt: 'Logos of restaurant brands on Cravio, such as KFC, Kacchi Bhai, Pizza Hut and Sultan’s Dine, around a storefront',
+    // Every brand logo must stay in view on the login/signup page, so it is fitted there instead of cropped.
+    photoFit: 'contain',
     accent: 'plum',
     perks: ['Your menu, your prices', 'Accept or reject every order', 'Daily sales at a glance'],
   },

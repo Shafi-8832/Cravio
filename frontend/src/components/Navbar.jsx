@@ -3,6 +3,7 @@ import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useCart } from '../context/CartContext'
 import CartDrawer from './CartDrawer'
+import CravioLogo from './brand/CravioLogo'
 import Icon from './Icon'
 import { errorMessage } from '../utils/format'
 
@@ -21,7 +22,9 @@ export default function Navbar() {
   return <>
     <header className="bg-white/95 border-b border-stone-200/60 sticky top-0 z-30 backdrop-blur-md">
       <div className="page-shell h-20 flex items-center gap-6">
-        <Link to="/" className="brand text-[31px] flex items-center gap-2.5" aria-label="Cravio home"><span className="bg-orange-600 text-white rounded-xl w-10 h-10 flex items-center justify-center"><Icon name="bag" size={24} /></span>cravio<span className="text-orange-600 -ml-2">.</span></Link>
+        {/* 76px nearly fills the 80px (h-20) bar without making it taller; RoleChooser's
+            one-screen layout subtracts exactly this 80px navbar (plus its 1px border). */}
+        <Link to="/" className="flex items-center" aria-label="Cravio home"><CravioLogo variant="full" size={76} /></Link>
         <div className="hidden lg:flex items-center gap-2 text-sm pl-6 border-l border-stone-200"><Icon name="pin" className="text-orange-600" /><div><p className="text-[10px] uppercase tracking-widest text-stone-400">Discover in</p><p className="font-semibold">Bangladesh <span className="ml-1">🇧🇩</span></p></div></div>
         <nav aria-label="Main navigation" className="flex items-center gap-5 ml-auto">
           <NavLink to="/" end className={({ isActive }) => 'hidden sm:block ' + activeClass({ isActive })}>Explore</NavLink>

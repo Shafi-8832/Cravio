@@ -167,10 +167,13 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   const openBranch = pizzaDetail.body.restaurant.branches.find(b => b.is_open)
   const closedBranch = pizzaDetail.body.restaurant.branches.find(b => !b.is_open)
 
-  const closedTry = await call('POST', '/api/orders', cust, { branch_id: closedBranch.id, delivery_address: 'Test address 1', payment_method: 'cash_on_delivery' })
+  // Every order now needs a delivery pin inside the branch's radius
+  // (trg_validate_order_branch_range). The branch's own pin always is.
+  const pinAt = branch => ({ delivery_latitude: Number(branch.latitude), delivery_longitude: Number(branch.longitude) })
+  const closedTry = await call('POST', '/api/orders', cust, { branch_id: closedBranch.id, delivery_address: 'Test address 1', payment_method: 'cash_on_delivery', ...pinAt(closedBranch) })
   check('closed branch -> 409 BRANCH_CLOSED', closedTry.status === 409 && closedTry.body.code === 'BRANCH_CLOSED', JSON.stringify(closedTry.body))
 
-  const order = await call('POST', '/api/orders', cust, { branch_id: openBranch.id, delivery_address: 'House 1, Road 1, Dhanmondi', payment_method: 'cash_on_delivery', promo_code: 'WELCOME20' })
+  const order = await call('POST', '/api/orders', cust, { branch_id: openBranch.id, delivery_address: 'House 1, Road 1, Dhanmondi', payment_method: 'cash_on_delivery', promo_code: 'WELCOME20', ...pinAt(openBranch) })
   check('order placed -> 201', order.status === 201, JSON.stringify(order.body))
 
   const o = order.body.order

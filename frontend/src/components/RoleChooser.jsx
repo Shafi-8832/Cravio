@@ -40,7 +40,7 @@ export default function RoleChooser({ signup = false }) {
             <FoodImage
               src={role.photo}
               alt={role.photoAlt}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+              className={'h-full w-full object-cover transition-transform group-hover:scale-105 ' + (role.photoPosition || '')} />
           </div>
           <div className={'p-5 shrink-0 ' + accent.panel}>
             <h2 className="text-xl font-extrabold flex items-center gap-3">

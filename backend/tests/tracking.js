@@ -64,17 +64,35 @@ async function main() {
   check('nearby radius above 25 rejected', (await call('GET', '/restaurants/nearby?lat=23.7&lng=90.4&radius_km=30', customer)).status, 400)
   check('nearby needs a session', (await call('GET', '/restaurants/nearby?lat=23.7&lng=90.4')).status, 401)
 
-  // Order with a delivery pin in Gulshan.
+  // Branch selection: GET /restaurants/:id/branches (branches_by_distance()).
+  const branchesUrl = `/restaurants/${rid}/branches?lat=23.7470&lng=90.3765`
+  check('branches needs a session (401)', (await call('GET', branchesUrl)).status, 401)
+  check('branches rejects lat=abc (400)', (await call('GET', `/restaurants/${rid}/branches?lat=abc&lng=90.3765`, customer)).status, 400)
+  check('branches rejects lat=Infinity (400)', (await call('GET', `/restaurants/${rid}/branches?lat=Infinity&lng=90.3765`, customer)).status, 400)
+  check('branches of missing restaurant is 404', (await call('GET', '/restaurants/99999999/branches?lat=23.7&lng=90.4', customer)).status, 404)
+  const near = await call('GET', branchesUrl, customer)
+  check('nearby branch auto-selected', near.body.selected_branch_id, branch.id)
+  const far = await call('GET', `/restaurants/${rid}/branches?lat=23.8759&lng=90.3795`, customer)
+  check('no branch selected from Uttara (out of range)', far.body.selected_branch_id, null)
+  check('out-of-range branch still listed, cannot deliver', far.body.branches[0].can_deliver, false)
+
+  // Orders: the branch is in Dhanmondi, radius 5 km (default).
   const category = await call('POST', '/menu/restaurants/' + rid + '/categories', owner, { name: 'Mains' })
   const dish = await call('POST', '/menu/categories/' + category.body.category.id + '/items', owner, { name: 'Tracking biryani', price: 250 })
   await call('POST', '/cart/' + rid + '/items', customer, { menu_item_id: dish.body.item.id, quantity: 1 })
-  const orderBody = { branch_id: branch.id, delivery_address: 'House 1, Gulshan Avenue', payment_method: 'cash_on_delivery' }
+  const orderBody = { branch_id: branch.id, delivery_address: 'House 1, Karwan Bazar', payment_method: 'cash_on_delivery' }
+  check('order without a pin rejected (400)', (await call('POST', '/orders', customer, orderBody)).status, 400)
   check('half a delivery pin rejected', (await call('POST', '/orders', customer, { ...orderBody, delivery_latitude: 23.79 })).status, 400)
-  const placed = await call('POST', '/orders', customer, { ...orderBody, delivery_latitude: 23.7925, delivery_longitude: 90.4078 })
+  // Gulshan is ~6 km away: the trigger rejects it, the API answers 409.
+  const tooFar = await call('POST', '/orders', customer, { ...orderBody, delivery_latitude: 23.7925, delivery_longitude: 90.4078 })
+  check('out-of-range pin rejected (409)', [tooFar.status, tooFar.body.code], [409, 'BRANCH_CANNOT_DELIVER'])
+  check('cart kept after the 409', (await call('GET', '/cart/' + rid, customer)).body.cart.length, 1)
+  // Karwan Bazar is ~3.2 km away: inside the radius.
+  const placed = await call('POST', '/orders', customer, { ...orderBody, delivery_latitude: 23.7700, delivery_longitude: 90.3950 })
   check('order with pin placed', placed.status, 201)
   const orderId = placed.body.order.id
   const stored = await pool.query('SELECT delivery_latitude::float8 AS lat FROM orders WHERE id=$1', [orderId])
-  check('delivery pin snapshot stored', stored.rows[0].lat, 23.7925)
+  check('delivery pin snapshot stored', stored.rows[0].lat, 23.77)
 
   // Planned road route: same access rule as /tracking, cached once per order.
   check('route needs a session (401)', (await call('GET', `/orders/${orderId}/route`)).status, 401)
@@ -96,9 +114,6 @@ async function main() {
     check('fallback is a straight line', firstRoute.geometry.length, 2)
     check('fallback is not cached', await cachedRows(), 0)
   }
-  await call('POST', '/cart/' + rid + '/items', customer, { menu_item_id: dish.body.item.id, quantity: 1 })
-  const noPin = await call('POST', '/orders', customer, orderBody)
-  check('order without a pin has no route', (await call('GET', `/orders/${noPin.body.order.id}/route`, customer)).body.route, { routed: false, reason: 'missing_coordinates' })
 
   // Tracking access before pickup.
   check('stranger customer cannot track (403)', (await call('GET', `/orders/${orderId}/tracking`, other)).status, 403)

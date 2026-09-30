@@ -17,11 +17,25 @@ CREATE INDEX IF NOT EXISTS idx_restaurants_owner
     ON restaurants(owner_id);
 
 
+-- The delivery pin used to be written by a separate UPDATE after this
+-- function returned. trg_validate_order_branch_range now checks the pin
+-- the moment the order row is INSERTed, so the pin must be part of that
+-- INSERT and therefore a parameter here.
+--
+-- Adding parameters creates a NEW function next to the old one (in
+-- PostgreSQL a function is identified by its name AND its parameter
+-- types). DROP the old 5-parameter version so there is exactly one
+-- place_order and no call can ever reach the version without a pin.
+DROP FUNCTION IF EXISTS place_order(INTEGER, INTEGER, TEXT, VARCHAR, VARCHAR);
+
 CREATE OR REPLACE FUNCTION place_order(
     p_customer_id INTEGER,
     p_branch_id INTEGER,
     p_delivery_address TEXT,
     p_payment_method VARCHAR(20),
+    -- Before p_promo_code because a parameter with a DEFAULT must come last.
+    p_delivery_latitude NUMERIC,
+    p_delivery_longitude NUMERIC,
     p_promo_code VARCHAR(20) DEFAULT NULL
 )
 RETURNS TABLE (
@@ -138,6 +152,10 @@ BEGIN
       JOIN cart_item_modifiers cim ON cim.modifier_option_id = mo.id
       JOIN cart_items ci ON ci.id = cim.cart_item_id
       WHERE ci.cart_id = v_cart_id ORDER BY mo.id FOR SHARE OF mo;
+    -- Same for the item offers that set this cart's discounted prices: an
+    -- owner cannot delete or shorten one halfway through this checkout.
+    PERFORM io.offer_id FROM item_offers io JOIN cart_items ci ON ci.menu_item_id = io.item_id
+      WHERE ci.cart_id = v_cart_id ORDER BY io.offer_id FOR SHARE OF io;
 
     -- Group requirements may have changed since the customer added the item.
     IF EXISTS (
@@ -202,10 +220,18 @@ BEGIN
     -- the quantity. Summing them in the outer query instead would multiply the
     -- base price once per modifier row and silently overcharge every item that
     -- has more than one.
-    SELECT ROUND(SUM((mi.price + line.modifier_total) * ci.quantity), 2)
+    --
+    -- Item offers: LEFT JOIN the active_item_offers view. If the dish has an
+    -- offer running now, aio.discounted_price is its sale price; if not, the
+    -- LEFT JOIN gives NULL and COALESCE falls back to the normal menu price.
+    -- The discount applies to the dish's base price; modifiers (extra cheese,
+    -- ...) keep their normal price. A promo code is applied later to this
+    -- subtotal, i.e. AFTER the item discounts.
+    SELECT ROUND(SUM((COALESCE(aio.discounted_price, mi.price) + line.modifier_total) * ci.quantity), 2)
     INTO v_subtotal
     FROM cart_items ci
     JOIN menu_items mi ON mi.id = ci.menu_item_id
+    LEFT JOIN active_item_offers aio ON aio.item_id = mi.id
     CROSS JOIN LATERAL (
         SELECT COALESCE(SUM(mo.price_modifier), 0.00) AS modifier_total
         FROM cart_item_modifiers cim
@@ -290,7 +316,9 @@ BEGIN
         discount_amount,
         total_amount,
         delivery_fee,
-        status
+        status,
+        delivery_latitude,
+        delivery_longitude
     )
     VALUES (
         p_customer_id,
@@ -301,7 +329,13 @@ BEGIN
         v_discount,
         v_total,
         v_delivery_fee,
-        'pending'
+        'pending',
+        -- The drop-off pin is a snapshot, like unit_price. The BEFORE INSERT
+        -- trigger trg_validate_order_branch_range checks it against the
+        -- branch's radius right here; if it fails, this whole function
+        -- (and the transaction around it) is rolled back.
+        p_delivery_latitude,
+        p_delivery_longitude
     )
     RETURNING id INTO v_order_id;
 
@@ -315,18 +349,20 @@ BEGIN
     -- cheese" and "Margherita, plain"), so RETURNING menu_item_id would not
     -- identify which line is which.
     --
-    -- unit_price stays the BASE menu price. The modifier deltas live in
-    -- order_item_modifiers with their own snapshot, so a line's true cost is
-    -- (unit_price + SUM(price_modifier)) * quantity — the same shape the cart
-    -- and the subtotal above use.
+    -- unit_price is the base price ACTUALLY CHARGED for one unit: the offer
+    -- price if an offer is running now, otherwise the menu price (the same
+    -- COALESCE as the subtotal above, so the two can never disagree). The
+    -- modifier deltas live in order_item_modifiers with their own snapshot,
+    -- so a line's true cost is (unit_price + SUM(price_modifier)) * quantity.
     FOR v_cart_item IN
         SELECT
             ci.id AS cart_item_id,
             ci.menu_item_id,
             ci.quantity,
-            mi.price, mi.name, mi.image_url
+            COALESCE(aio.discounted_price, mi.price) AS price, mi.name, mi.image_url
         FROM cart_items ci
         JOIN menu_items mi ON mi.id = ci.menu_item_id
+        LEFT JOIN active_item_offers aio ON aio.item_id = mi.id
         WHERE ci.cart_id = v_cart_id -- don't get confused about v_cart_id, we have already found the cart_id before and put it in v_cart_id, now we are just reusing the variable
         ORDER BY ci.id
     LOOP

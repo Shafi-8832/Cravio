@@ -4,6 +4,9 @@ import RestaurantCard from '../components/RestaurantCard'
 import Icon from '../components/Icon'
 import FoodImage from '../components/FoodImage'
 import NearbyRestaurants from '../components/map/NearbyRestaurants'
+import HeroCarousel from '../components/home/HeroCarousel'
+import HomeRails from '../components/home/HomeRails'
+import useCustomerHome from '../components/home/useCustomerHome'
 import { listRestaurants } from '../services/restaurantApi'
 import { getFavorites, saveFavorite, removeFavorite } from '../services/accountApi'
 import { useAuth } from '../context/AuthContext'
@@ -16,6 +19,11 @@ const categories = [
 ]
 export default function HomePage() {
   const { user } = useAuth()
+  // Customers get the database-driven home: offers carousel + rails, all
+  // from /api/home/* (those endpoints need a login, so guests keep the
+  // general welcome hero). null while the five requests are in flight.
+  const isCustomer = user?.role === 'customer'
+  const home = useCustomerHome(isCustomer)
   const [restaurants, setRestaurants] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -77,7 +85,7 @@ export default function HomePage() {
   const shown = restaurants
   const discover = () => document.getElementById('restaurants').scrollIntoView({ behavior: 'smooth' })
   return <main className="page-shell pt-7 pb-12">
-    <section className="hero-panel grid md:grid-cols-[1.12fr_1fr] min-h-[415px]">
+    {isCustomer ? <HeroCarousel loading={home === null} banners={home?.banners} /> : <section className="hero-panel grid md:grid-cols-[1.12fr_1fr] min-h-[415px]">
       <div className="px-7 py-10 md:px-12 md:py-12 relative z-10">
         <p className="eyebrow flex items-center gap-2 mb-5"><span className="w-5 h-px bg-orange-600" />Good food. Good mood.</p>
         <h1 className="hero-title">Your cravings,<br /><span className="text-orange-600">delivered.</span></h1>
@@ -94,7 +102,7 @@ export default function HomePage() {
         <span aria-hidden="true" className="float-food absolute text-4xl bottom-7 right-12">🍟</span>
         <div className="absolute bottom-9 left-7 md:bottom-10 md:left-0 bg-white rounded-xl shadow-lg px-4 py-3 flex items-center gap-3 -rotate-3"><span className="text-2xl">😋</span><div><p className="text-xs font-extrabold">A little joy in every order</p><p className="text-[10px] text-stone-500 mt-1">Made for your food mood</p></div></div>
       </div>
-    </section>
+    </section>}
 
     <section className="mt-10" aria-label="Food categories">
       <div className="flex justify-between items-center mb-5"><h2 className="section-heading !text-2xl">What sounds good?</h2><span className="hidden sm:inline text-xs text-stone-500">Follow your cravings ✨</span></div>
@@ -103,10 +111,12 @@ export default function HomePage() {
       </div>
     </section>
 
-    <div className="grid sm:grid-cols-2 gap-5 mt-7">
+    {isCustomer && <HomeRails home={home} />}
+
+    {!isCustomer && <div className="grid sm:grid-cols-2 gap-5 mt-7">
       <button onClick={() => { setCuisine('biryani'); discover() }} className="promo-card rounded-2xl bg-[#fbe7d5] p-6 text-left flex items-center"><div className="relative z-10 max-w-[65%]"><p className="eyebrow !text-[10px] mb-2">The comfort collection</p><h3 className="text-xl font-extrabold">Big flavour.<br />Bigger biryani love.</h3><span className="text-xs font-semibold inline-flex items-center gap-1 mt-3">Explore biryani <Icon name="arrow" size={14} /></span></div><span className="text-8xl absolute right-4 -rotate-12" aria-hidden="true">🍛</span></button>
       <button onClick={() => { setCuisine(''); setDivision('Dhaka'); discover() }} className="promo-card rounded-2xl bg-[#e8edde] p-6 text-left flex items-center"><div className="relative z-10 max-w-[65%]"><p className="eyebrow !text-[10px] !text-green-800 mb-2">Across all 8 divisions</p><h3 className="text-xl font-extrabold">Local favourites,<br />near your area.</h3><span className="text-xs font-semibold inline-flex items-center gap-1 mt-3">Discover Dhaka <Icon name="arrow" size={14} /></span></div><span className="text-8xl absolute right-5 rotate-12" aria-hidden="true">🥘</span></button>
-    </div>
+    </div>}
 
     <section id="restaurants" className="mt-11 scroll-mt-28">
       <div className="flex items-end justify-between gap-4 mb-5"><div><p className="eyebrow mb-2">Find your next favourite</p><h2 className="section-heading">Restaurants to love</h2></div><span className="text-xs text-stone-500 hidden sm:inline">{loading ? 'Finding good food…' : total + ' restaurants to explore'}</span></div>
