@@ -121,12 +121,13 @@ async function main() {
   check('missing order is 404', (await call('GET', '/orders/99999999/tracking', customer)).status, 404)
   check('pending order not trackable yet', (await call('GET', `/orders/${orderId}/tracking`, customer)).body.tracking.tracking_active, false)
 
-  await call('PATCH', '/orders/' + orderId + '/status', owner, { status: 'confirmed' })
+  await call('POST', '/orders/' + orderId + '/accept', owner, { prep_minutes: 15 })
   await call('PATCH', '/orders/' + orderId + '/status', owner, { status: 'preparing' })
   await call('PATCH', '/rider/profile', rider, { status: 'online' })
   check('rider accepts', (await call('POST', `/rider/deliveries/${orderId}/accept`, rider)).status, 201)
   // Moving before pickup is not part of the customer's trail.
   await call('PUT', '/rider/location', rider, dhanmondi)
+  await call('POST', '/orders/' + orderId + '/food-ready', owner)
   check('pickup succeeds', (await call('PATCH', `/rider/deliveries/${orderId}/status`, rider, { status: 'picked_up' })).status, 200)
   check('no trail before pickup', (await pool.query('SELECT COUNT(*)::int AS n FROM delivery_location_log WHERE order_id=$1', [orderId])).rows[0].n, 0)
 

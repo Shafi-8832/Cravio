@@ -62,6 +62,36 @@ export const updateOrderStatus = (orderId, status) => {
 }
 
 
+// Accepting commits the kitchen to a time: the server stores accepted_at and
+// ready_at = accepted_at + prep_minutes. prep_minutes must be one of the
+// values getLifecycleOptions returns; the server and the database both
+// reject anything else.
+export const acceptOrder = (orderId, prepMinutes) => {
+    return api.post(`/api/orders/${orderId}/accept`, { prep_minutes: prepMinutes })
+}
+
+
+// Rejecting needs one of the fixed reasons. The server stores it in
+// orders.rejected_reason and runs the normal cancellation cleanup.
+export const rejectOrder = (orderId, reason) => {
+    return api.post(`/api/orders/${orderId}/reject`, { reason })
+}
+
+
+// The write that lets a rider collect the order. Until this lands, the
+// rider's confirm-pickup call comes back 409 FOOD_NOT_READY.
+export const markFoodReady = (orderId) => {
+    return api.post(`/api/orders/${orderId}/food-ready`)
+}
+
+
+// The prep-time buttons and rejection reasons, read from the server so this
+// list cannot drift away from the database CHECK constraints.
+export const getLifecycleOptions = () => {
+    return api.get('/api/orders/lifecycle-options')
+}
+
+
 // Analytics. The restaurant id is in the path, and the server re-checks
 // that it belongs to the caller before answering — the id being in the URL
 // is a request, not a permission.

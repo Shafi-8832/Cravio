@@ -82,6 +82,9 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   const cust = await login('ayesha@example.com')
   const cust2 = await login('tanvir@example.com')
   const ownerPizza = await login('rafiq@example.com')
+  // A second restaurant owner, used to prove the lifecycle endpoints refuse
+  // an owner who does not own the order's restaurant.
+  const ownerOther = await login('sadia@example.com')
   const rider = await login('jahangir@example.com')
 
   // ---------------------------------------------------------
@@ -192,12 +195,38 @@ const section = (t) => console.log(`\n=== ${t} ===`)
 
   // ---------------------------------------------------------
   section('order lifecycle + COD settles on delivery')
-  check('owner pending->confirmed', (await call('PATCH', `/api/orders/${o.id}/status`, ownerPizza, { status: 'confirmed' })).status === 200)
+  // Accepting now needs a prep time, and the server stores the promise.
+  const noPrep = await call('POST', `/api/orders/${o.id}/accept`, ownerPizza, {})
+  check('accept without prep_minutes -> 400', noPrep.status === 400, JSON.stringify(noPrep.body))
+  const badPrep = await call('POST', `/api/orders/${o.id}/accept`, ownerPizza, { prep_minutes: 7 })
+  check('accept with a prep time off the list -> 400', badPrep.status === 400, JSON.stringify(badPrep.body))
+
+  const accepted = await call('POST', `/api/orders/${o.id}/accept`, ownerPizza, { prep_minutes: 15 })
+  check('owner accepts with 15 min -> confirmed', accepted.status === 200 && accepted.body.order.status === 'confirmed', JSON.stringify(accepted.body))
+  check('accept stored the prep commitment', accepted.body.order.prep_minutes === 15 && Boolean(accepted.body.order.accepted_at) && Boolean(accepted.body.order.ready_at), JSON.stringify(accepted.body.order))
+  check('ready_at is accepted_at + prep_minutes', Math.round((new Date(accepted.body.order.ready_at) - new Date(accepted.body.order.accepted_at)) / 60000) === 15)
+
   check('owner confirmed->preparing', (await call('PATCH', `/api/orders/${o.id}/status`, ownerPizza, { status: 'preparing' })).status === 200)
 
   const accept = await call('POST', `/api/rider/deliveries/${o.id}/accept`, rider)
   check('rider accepts delivery -> 201', accept.status === 201, JSON.stringify(accept.body))
-  check('rider picked_up', (await call('PATCH', `/api/rider/deliveries/${o.id}/status`, rider, { status: 'picked_up' })).status === 200)
+
+  // THE GATE: the kitchen has not pressed "food is ready", so pickup must
+  // fail even though the rider holds the job.
+  const early = await call('PATCH', `/api/rider/deliveries/${o.id}/status`, rider, { status: 'picked_up' })
+  check('pickup before food is ready -> 409 FOOD_NOT_READY', early.status === 409 && early.body.code === 'FOOD_NOT_READY', JSON.stringify(early.body))
+
+  // Only this restaurant's owner may open the gate.
+  const strangerReady = await call('POST', `/api/orders/${o.id}/food-ready`, ownerOther, {})
+  check('another owner cannot mark food ready -> 403', strangerReady.status === 403, JSON.stringify(strangerReady.body))
+  const riderReady = await call('POST', `/api/orders/${o.id}/food-ready`, rider, {})
+  check('a rider cannot mark food ready -> 403', riderReady.status === 403, JSON.stringify(riderReady.body))
+
+  const ready = await call('POST', `/api/orders/${o.id}/food-ready`, ownerPizza, {})
+  check('owner marks food ready -> food_ready', ready.status === 200 && ready.body.order.status === 'food_ready', JSON.stringify(ready.body))
+  check('food_ready_at stamped', Boolean(ready.body.order.food_ready_at), JSON.stringify(ready.body.order))
+
+  check('rider picked_up once the food is ready', (await call('PATCH', `/api/rider/deliveries/${o.id}/status`, rider, { status: 'picked_up' })).status === 200)
   check('rider delivered', (await call('PATCH', `/api/rider/deliveries/${o.id}/status`, rider, { status: 'delivered' })).status === 200)
 
   const payAfter = await call('GET', `/api/payments/${o.id}`, cust)
@@ -257,7 +286,7 @@ const section = (t) => console.log(`\n=== ${t} ===`)
   section('customer cancel refunds promo + fails payment')
   const promoBefore = await call('GET', '/api/restaurants') // touch
   await call('POST', addUrl, cust, { menu_item_id: margherita.id, quantity: 1, modifier_option_ids: [regular.id] })
-  const order2 = await call('POST', '/api/orders', cust, { branch_id: openBranch.id, delivery_address: 'Somewhere 2', payment_method: 'bkash', promo_code: 'FLAT10' })
+  const order2 = await call('POST', '/api/orders', cust, { branch_id: openBranch.id, delivery_address: 'Somewhere 2', payment_method: 'bkash', promo_code: 'FLAT10', ...pinAt(openBranch) })
   check('second order placed', order2.status === 201, JSON.stringify(order2.body))
   const o2 = order2.body.order
 
@@ -292,7 +321,8 @@ const section = (t) => console.log(`\n=== ${t} ===`)
       menu_item_id: itemId, quantity: 1, modifier_option_ids: modifierIds
     })
     const placed = await call('POST', '/api/orders', token, {
-      branch_id: branchId, delivery_address: 'Lifecycle test address', payment_method: method
+      branch_id: branchId, delivery_address: 'Lifecycle test address', payment_method: method,
+      ...pinAt(openBranch)
     })
     if (placed.status !== 201) throw new Error('placeAndDeliver: order failed ' + JSON.stringify(placed.body))
     const id = placed.body.order.id
@@ -300,9 +330,11 @@ const section = (t) => console.log(`\n=== ${t} ===`)
       await call('POST', `/api/payments/${id}/reference`, token, { transaction_ref: `BK-LIFECYCLE-${id}` })
       await call('PATCH', `/api/payments/${id}/status`, ownerPizza, { status: 'paid' })
     }
-    await call('PATCH', `/api/orders/${id}/status`, ownerPizza, { status: 'confirmed' })
+    await call('POST', `/api/orders/${id}/accept`, ownerPizza, { prep_minutes: 10 })
     await call('PATCH', `/api/orders/${id}/status`, ownerPizza, { status: 'preparing' })
     await call('POST', `/api/rider/deliveries/${id}/accept`, rider)
+    // The food has to be marked ready before a rider can collect it.
+    await call('POST', `/api/orders/${id}/food-ready`, ownerPizza, {})
     await call('PATCH', `/api/rider/deliveries/${id}/status`, rider, { status: 'picked_up' })
     await call('PATCH', `/api/rider/deliveries/${id}/status`, rider, { status: 'delivered' })
     return id

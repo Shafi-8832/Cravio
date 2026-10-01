@@ -88,10 +88,20 @@ at once and every read is keyed by restaurant.
 | GET | `/api/orders/:id/tracking` | Token | customer, rider, restaurant_owner, admin *(this order only)* | Live map snapshot: rider position, distance remaining, ETA and whether the GPS signal is stale. Polled every 5 s. |
 | GET | `/api/orders/:id/route` | Token | customer, rider, restaurant_owner, admin *(this order only)* | The planned road route from branch to drop-off, fetched from OSRM once and cached in `order_routes`. |
 | GET | `/api/orders/:id` | Token | customer (own), restaurant_owner (own branch), admin | One receipt: items, modifiers, payment, delivery and the status timeline. |
-| PATCH | `/api/orders/:id/status` | Token | restaurant_owner (own), admin | Moves the order forward along the whitelisted owner transitions. |
+| GET | `/api/orders/lifecycle-options` | Token | any | The allowed `prep_minutes` values and rejection reasons, so the owner UI and the database CHECK constraints cannot drift apart. |
+| POST | `/api/orders/:id/accept` | Token | restaurant_owner (own), admin | Accepts a pending order **with a prep time**. Body `{ prep_minutes }`, one of 10/15/20/30/45. Stores `accepted_at` and `ready_at = accepted_at + prep_minutes` and moves the order to `confirmed`. |
+| POST | `/api/orders/:id/reject` | Token | restaurant_owner (own), admin | Rejects a pending order with a reason (`item_unavailable`, `kitchen_overloaded`, `closing_soon`). Stores it in `rejected_reason`, cancels the order and runs the normal cancellation cleanup. |
+| POST | `/api/orders/:id/food-ready` | Token | restaurant_owner (own), admin | Marks the food ready: `food_ready_at = now`, status `preparing` → `food_ready`. This is the write a rider's pickup is gated on. |
+| PATCH | `/api/orders/:id/status` | Token | restaurant_owner (own), admin | The owner moves that need no extra input: `confirmed` → `preparing`, and `cancelled` from `confirmed`/`preparing`/`food_ready`. Accepting and rejecting have their own endpoints above. |
 | PATCH | `/api/orders/:id/cancel` | Token | customer (own) | Cancels an order that is still cancellable. A paid order returns `REFUND_REQUIRED` instead of pretending to refund. |
 
-Literal paths (`/my-orders`, `/restaurant`) are declared before `/:id`.
+Literal paths (`/my-orders`, `/restaurant`, `/lifecycle-options`) are declared
+before `/:id`.
+
+Order status runs `pending → confirmed → preparing → food_ready →
+out_for_delivery → delivered`, plus `cancelled`. Every arrow is enforced by
+`trg_enforce_order_status_transition` in the database, so no route, script or
+psql session can skip a stage — see [DATABASE.md](DATABASE.md).
 
 ## Rider — `backend/routes/rider.js` — `router.use(authenticateToken, requireRole('rider'))`
 
@@ -103,7 +113,7 @@ Literal paths (`/my-orders`, `/restaurant`) are declared before `/:id`.
 | GET | `/api/rider/deliveries/mine` | Token | rider | The caller's active and past deliveries. |
 | PUT | `/api/rider/location` | Token | rider | Upserts "where I am now". The rider id comes from the token, never the body, so a rider can only move themselves. 204 on success. |
 | POST | `/api/rider/deliveries/:orderId/accept` | Token | rider | Claims a job. Takes row locks so two riders cannot claim the same order and one rider cannot hold two. 201, or 409 if unclaimable. |
-| PATCH | `/api/rider/deliveries/:orderId/status` | Token | rider (own delivery) | `assigned → picked_up → delivered`. The final step calls the `complete_delivery()` procedure. |
+| PATCH | `/api/rider/deliveries/:orderId/status` | Token | rider (own delivery) | `assigned → picked_up → delivered`. Both steps are a procedure call: `pickup_delivery()` then `complete_delivery()`. Pickup returns **409 `FOOD_NOT_READY`** until the restaurant has marked the food ready. |
 
 ## Payments — `backend/routes/payments.js`
 

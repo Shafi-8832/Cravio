@@ -187,7 +187,7 @@ async function buildOwnerProfile(userId) {
     `SELECT
        COUNT(o.id)::INTEGER AS orders_received,
        COUNT(o.id) FILTER (WHERE o.status = 'delivered')::INTEGER AS orders_delivered,
-       COUNT(o.id) FILTER (WHERE o.status IN ('pending', 'confirmed', 'preparing', 'out_for_delivery'))::INTEGER AS orders_in_progress,
+       COUNT(o.id) FILTER (WHERE o.status IN ('pending', 'confirmed', 'preparing', 'food_ready', 'out_for_delivery'))::INTEGER AS orders_in_progress,
        COALESCE(SUM(o.total_amount) FILTER (WHERE o.status = 'delivered'), 0) AS revenue
      FROM orders o
      JOIN restaurant_branches b ON b.id = o.branch_id

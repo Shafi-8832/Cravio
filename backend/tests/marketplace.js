@@ -77,7 +77,7 @@ async function main() {
   check('order preserves dish name snapshot', receipt.body.order.items[0].name, 'Test biryani')
   check('order preserves price snapshot', Number(receipt.body.order.items[0].unit_price), 250)
   check('foreign customer cannot view receipt', (await call('GET', '/orders/' + order.id, other)).status, 404)
-  await call('PATCH', '/orders/' + order.id + '/status', owner, { status: 'confirmed' })
+  await call('POST', '/orders/' + order.id + '/accept', owner, { prep_minutes: 20 })
   await call('PATCH', '/orders/' + order.id + '/status', owner, { status: 'preparing' })
   await call('PATCH', '/rider/profile', rider1, { status: 'online' })
   await call('PATCH', '/rider/profile', rider2, { status: 'online' })
@@ -90,6 +90,10 @@ async function main() {
   check('busy rider cannot go offline', (await call('PATCH', '/rider/profile', winner, { status: 'offline' })).status, 409)
   check('foreign rider cannot deliver order', (await call('PATCH', '/rider/deliveries/' + order.id + '/status', loser, { status: 'picked_up' })).status, 403)
   check('cannot skip pickup', (await call('PATCH', '/rider/deliveries/' + order.id + '/status', winner, { status: 'delivered' })).status, 409)
+  // The food-ready gate: the kitchen has not marked it, so the rider holding
+  // the job still cannot collect.
+  check('pickup before food is ready', (await call('PATCH', '/rider/deliveries/' + order.id + '/status', winner, { status: 'picked_up' })).status, 409)
+  check('owner marks food ready', (await call('POST', '/orders/' + order.id + '/food-ready', owner)).status, 200)
   check('pickup succeeds', (await call('PATCH', '/rider/deliveries/' + order.id + '/status', winner, { status: 'picked_up' })).status, 200)
   check('delivery procedure succeeds', (await call('PATCH', '/rider/deliveries/' + order.id + '/status', winner, { status: 'delivered' })).status, 200)
   const delivered = (await call('GET', '/orders/' + order.id, customer)).body.order

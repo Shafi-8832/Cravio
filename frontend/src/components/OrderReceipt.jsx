@@ -4,8 +4,9 @@ import { useAuth } from '../context/AuthContext'
 import FoodImage from './FoodImage'
 import StarInput from './StarInput'
 import { money, errorMessage } from '../utils/format'
+import { ORDER_STEPS, STEP_LABELS, customerStage } from '../utils/orderLifecycle'
 
-const steps = ['pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered']
+const steps = ORDER_STEPS
 export default function OrderReceipt({ id, onChanged }) {
   const { user } = useAuth()
   const [order, setOrder] = useState(null)
@@ -20,6 +21,10 @@ export default function OrderReceipt({ id, onChanged }) {
   const [reviewed, setReviewed] = useState(false)
   const [riderReview, setRiderReview] = useState({ rating: 0, comment: '' })
   const [riderReviewed, setRiderReviewed] = useState(false)
+  // The receipt reloads every 15 seconds, which is too slow for a countdown.
+  // This ticks every second so "Ready in 4:05" actually counts down between
+  // reloads; the numbers it counts towards still come from the server.
+  const [now, setNow] = useState(() => Date.now())
   const load = useCallback(async () => {
     try { setOrder((await getOrderDetails(id)).data.order) }
     catch (err) { setError(errorMessage(err)) }
@@ -27,6 +32,7 @@ export default function OrderReceipt({ id, onChanged }) {
   // The effect starts remote I/O; load updates state after the API response.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); const timer = setInterval(load, 15000); return () => clearInterval(timer) }, [load])
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer) }, [])
   async function action(operation, message) {
     setBusy(true); setError(''); setNotice('')
     try { await operation(); setNotice(message); await load(); onChanged?.() }
@@ -38,7 +44,18 @@ export default function OrderReceipt({ id, onChanged }) {
   const current = steps.indexOf(order.status)
   return <div className="p-5 bg-stone-50 rounded-b-2xl">
     {error && <p className="notice-error mb-3" role="alert">{error}</p>}{notice && <p className="notice-success mb-3" role="status">{notice}</p>}
-    {order.status !== 'cancelled' && <ol className="flex mb-7">{steps.map((step, index) => <li key={step} className={'order-step ' + (index < current ? 'complete' : '')}><span className={'w-9 h-9 relative z-10 rounded-full mx-auto flex items-center justify-center text-sm font-bold ' + (index <= current ? 'bg-green-800 text-white' : 'bg-stone-200 text-stone-500')}>{index < current ? '✓' : index + 1}</span><span className="block text-[11px] sm:text-xs mt-2 capitalize">{step.replaceAll('_', ' ')}</span></li>)}</ol>}
+    {order.status !== 'cancelled' && <ol className="flex mb-5">{steps.map((step, index) => <li key={step} className={'order-step ' + (index < current ? 'complete' : '')}><span className={'w-9 h-9 relative z-10 rounded-full mx-auto flex items-center justify-center text-sm font-bold ' + (index <= current ? 'bg-green-800 text-white' : 'bg-stone-200 text-stone-500')}>{index < current ? '✓' : index + 1}</span><span className="block text-[11px] sm:text-xs mt-2">{STEP_LABELS[step]}</span></li>)}</ol>}
+    {/* The stage in words, under the bar. The bar says how far along the
+        order is; this says what is happening and, while the kitchen is
+        cooking, counts down to the ready_at the restaurant committed to.
+        If the restaurant turned the order down it carries the reason. */}
+    {(() => {
+      const stage = customerStage(order, now)
+      return <div className={'rounded-xl p-4 mb-6 ' + (order.status === 'cancelled' ? 'bg-red-50' : 'bg-white')}>
+        <p className="font-bold">{stage.heading}</p>
+        {stage.detail && <p className="text-sm muted mt-1">{stage.detail}</p>}
+      </div>
+    })()}
     <p className="text-sm mb-4"><strong>Deliver to:</strong> {order.delivery_address}</p>
     <div className="space-y-3">{order.items.map(item => <div key={item.id} className="flex gap-3 items-center"><FoodImage src={item.image_url} alt={item.name} className="w-14 h-14 object-cover rounded-lg" /><div className="flex-1"><p className="text-sm font-semibold">{item.quantity} × {item.name}</p><p className="text-xs muted">{item.modifiers?.map(modifier => modifier.name).join(', ')}</p></div><p className="text-sm font-bold">{money(item.line_total)}</p></div>)}</div>
     <dl className="text-sm space-y-2 mt-5 border-t pt-4">{[['Subtotal', order.subtotal], ['Discount', -Number(order.discount_amount)], ['Delivery', order.delivery_fee], ['Total', order.total_amount]].map(([label, amount]) => <div className="flex justify-between" key={label}><dt>{label}</dt><dd className="font-bold">{money(amount)}</dd></div>)}</dl>

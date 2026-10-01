@@ -7,7 +7,7 @@ Schema files:
 
 - `backend/db/schema.sql` — the base schema (22 tables). It contains a
   destructive reset and is used **only** to bootstrap an empty database.
-- `backend/db/migrations/001..009_*.sql` — additive, checksummed migrations.
+- `backend/db/migrations/001..012_*.sql` — additive, checksummed migrations.
 - `backend/db/functions/*.sql` — the triggers, functions and the procedure.
   Re-installed on every migration run with `CREATE OR REPLACE`.
 
@@ -55,8 +55,15 @@ several at once.
 
 - `orders` — `customer_id → users`, `branch_id → restaurant_branches`,
   `rider_id → users`, `promo_code_id → promo_codes`. Status runs
-  `pending → confirmed → preparing → out_for_delivery → delivered`, plus
-  `cancelled`. Holds the delivery address and drop-off coordinates as a
+  `pending → confirmed → preparing → food_ready → out_for_delivery →
+  delivered`, plus `cancelled`, and every arrow is enforced by
+  `trg_enforce_order_status_transition`. The lifecycle columns added in
+  migration 012 are what make the status mean something:
+  `prep_minutes` and `accepted_at` (what the restaurant committed to and
+  when), `ready_at` (the stored target, `accepted_at + prep_minutes`),
+  `food_ready_at` (when the kitchen actually finished — the pickup gate reads
+  this) and `rejected_reason` (set only when a restaurant turns an order
+  down). Holds the delivery address and drop-off coordinates as a
   snapshot, and the delivery fee as charged.
 - `order_items` — `order_id → orders`, `menu_item_id → menu_items`. Dish name,
   photo and unit price are **copied** here, so a later menu edit cannot
@@ -102,6 +109,7 @@ several at once.
 |---|---|---|---|---|---|
 | `trg_sync_restaurant_rating` | `backend/db/functions/restaurant_rating.sql:211` | `AFTER INSERT OR UPDATE OF rating, order_id OR DELETE ON restaurant_reviews`, `FOR EACH ROW` | `restaurant_reviews`, `orders`, `restaurant_branches` | `restaurants` (`avg_rating`, `review_count`) | Ratings are read on nearly every page and written only when a delivered order is reviewed, so they are stored on the restaurant row instead of recomputed per read. The trigger keeps the stored copy correct in the same transaction as the review change, so application code never writes those two columns. |
 | `trg_record_order_event` | `backend/db/migrations/003_marketplace.sql:76` | `AFTER INSERT OR UPDATE OF status ON orders`, `FOR EACH ROW` | `orders` (`NEW`/`OLD`) | `order_events` | The status timeline must record every transition, including ones made by the `complete_delivery()` procedure or by hand in psql — not only the ones that went through an Express route. |
+| `trg_enforce_order_status_transition` | `backend/db/functions/order_lifecycle.sql` | `BEFORE UPDATE OF status ON orders`, `FOR EACH ROW` | `orders` (`NEW`/`OLD`) | nothing — it only permits or rejects the write | "An order cannot skip a stage" is a rule about the data, not about one request handler. The service layer checks the same arrows to produce a readable 409; the trigger is what makes the rule true for a seed script, a psql session or a future endpoint. `BEFORE`, because the point is to stop the write. |
 | `trg_log_rider_location` | `backend/db/functions/live_tracking.sql:131` | `AFTER INSERT OR UPDATE OF latitude, longitude ON rider_current_location`, `FOR EACH ROW` | `orders` | `delivery_location_log` | `delivery_location_log` is a shadow table of `rider_current_location`; as a trigger the database itself guarantees the two can never disagree, and a failed log insert rolls the position update back with it. |
 
 All three are narrowed with `UPDATE OF <columns>` so they fire only when a
@@ -118,6 +126,7 @@ location trigger would add a phantom point to a customer's trail when only
 | `sync_restaurant_rating() → TRIGGER` <br> plpgsql | `backend/db/functions/restaurant_rating.sql:88` | `trg_sync_restaurant_rating` | `orders`, `restaurant_branches`, `restaurant_reviews` | `restaurants` | Works out which restaurant(s) a review change affects — an `UPDATE` that re-points a review touches two — and rewrites their stored rating and count. |
 | `record_order_event() → TRIGGER` <br> plpgsql | `backend/db/migrations/003_marketplace.sql:65` | `trg_record_order_event` | `orders` (`NEW`/`OLD`) | `order_events` | Appends one timeline row on insert, and one more whenever the status actually changes (`IS DISTINCT FROM`). |
 | `log_rider_location() → TRIGGER` <br> plpgsql | `backend/db/functions/live_tracking.sql:92` | `trg_log_rider_location` | `orders` | `delivery_location_log` | One `INSERT ... SELECT` copies the new position into the trail of every order that rider is carrying with status `out_for_delivery`. An idle rider inserts nothing. |
+| `enforce_order_status_transition() → TRIGGER` <br> plpgsql | `backend/db/functions/order_lifecycle.sql` | `trg_enforce_order_status_transition` | `orders` (`NEW`/`OLD`) | — | Holds the order state machine as one `CASE` returning the statuses that may follow the current one. Raises SQLSTATE `CRV03` for anything else; `delivered` and `cancelled` map to an empty array, which is what makes them final. |
 | `distance_km(lat1, lng1, lat2, lng2) → NUMERIC` <br> `LANGUAGE sql IMMUTABLE STRICT` | `backend/db/functions/live_tracking.sql:42` | `GET /api/restaurants/nearby`, the order tracking query in `backend/services/orderService.js`, and the admin live board in `backend/routes/admin.js` | — | — | Haversine great-circle distance. It lives in SQL because the database does the "within 5 km, closest first" filtering and sorting; computing it in JavaScript would mean shipping every branch to Node first. `STRICT` returns `NULL` for a rider with no fix yet. |
 | `place_order(p_customer_id, p_branch_id, p_delivery_address, p_payment_method, p_promo_code) → TABLE(...)` <br> plpgsql | `backend/db/functions/place_order.sql:20` | `backend/services/orderService.js` — `SELECT ... FROM place_order($1,$2,$3,$4,$5)` | `users`, `restaurant_branches`, `carts`, `cart_items`, `cart_item_modifiers`, `menu_items`, `modifier_groups`, `modifier_options`, `promo_codes` | `orders`, `order_items`, `order_item_modifiers`, `payments` | Checkout. It validates the customer, branch, cart and promo code, computes the totals from database prices, and converts the cart into an order — all in one round trip, so no partly-created order can exist. Failures are `RAISE EXCEPTION` with named codes (`CART_EMPTY`, `BRANCH_CLOSED`, `PROMO_CODE_EXPIRED`, …) which `CHECKOUT_ERROR_MAP` in `orderService.js` maps to an HTTP status and a client-facing code. |
 
@@ -125,6 +134,7 @@ location trigger would add a phantom point to a customer's trail when only
 
 | Name | File | Called by | Reads | Writes | Why it exists |
 |---|---|---|---|---|---|
+| `pickup_delivery(p_order_id INTEGER, p_rider_id INTEGER)` <br> plpgsql, `SECURITY INVOKER`, `SET search_path = public, pg_temp` | `backend/db/functions/order_lifecycle.sql` | `backend/routes/rider.js` — `CALL pickup_delivery($1, $2)` when a rider confirms pickup | `rider_profiles`, `orders`, `deliveries` (all `FOR UPDATE`) | `deliveries`, `orders` | Confirming a pickup is two writes in two tables that must both land or neither. It also holds **the food-ready gate**: `IF v_order.food_ready_at IS NULL THEN RAISE EXCEPTION 'FOOD_NOT_READY'`, so a rider cannot collect food the kitchen has not finished — from any caller, not just the route. Locks in the same order as `complete_delivery()` to avoid a deadlock between the two. |
 | `complete_delivery(p_order_id INTEGER, p_rider_id INTEGER)` <br> plpgsql, `SECURITY INVOKER`, `SET search_path = public, pg_temp` | `backend/db/functions/complete_delivery.sql:3` | `backend/routes/rider.js` — `CALL complete_delivery($1, $2)` inside that route's transaction, when a rider marks a delivery delivered | `rider_profiles`, `orders`, `deliveries` (all `FOR UPDATE`), `payments` | `deliveries`, `orders`, `payments`, `rider_profiles` | "Delivered" is four writes that must all happen or none: close the delivery, mark the order delivered and review-eligible, settle cash-on-delivery, and put the rider back to `online`. It takes the row locks itself, so the same logic is safe from any caller — not only the Express route. |
 
 ## Views

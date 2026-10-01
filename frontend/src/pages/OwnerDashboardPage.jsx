@@ -20,17 +20,29 @@ import {
   deleteMenuItem,
   getMenu,
   getRestaurantOrders,
-  updateOrderStatus
+  updateOrderStatus,
+  acceptOrder,
+  rejectOrder,
+  markFoodReady,
+  getLifecycleOptions
 } from '../services/ownerApi'
+import { REJECTION_CHOICES, readyCountdown, readyAtLabel } from '../utils/orderLifecycle'
 
 const ORDER_STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-700',
   confirmed: 'bg-blue-100 text-blue-700',
   preparing: 'bg-orange-100 text-orange-700',
+  food_ready: 'bg-emerald-100 text-emerald-700',
   out_for_delivery: 'bg-purple-100 text-purple-700',
   delivered: 'bg-green-100 text-green-700',
   cancelled: 'bg-red-100 text-red-600'
 }
+
+// Fallback for the prep-time buttons if the options request has not landed
+// yet. It matches the server's list and chk_order_prep_minutes; the server
+// is still the authority, so a stale value here produces a 400, not a bad
+// promise.
+const DEFAULT_PREP_MINUTES = [10, 15, 20, 30, 45]
 
 const OwnerDashboardPage = () => {
   // The analytics page can send someone here already pointed at a status,
@@ -42,6 +54,15 @@ const OwnerDashboardPage = () => {
 
   const [restaurants, setRestaurants] = useState([])
   const [selectedId, setSelectedId] = useState(null)
+  // The prep-time and rejection lists come from the server so this page and
+  // the database CHECK constraints cannot disagree.
+  const [prepOptions, setPrepOptions] = useState(DEFAULT_PREP_MINUTES)
+  // Which order has its reject reason picker open. Reject is a small
+  // secondary link, so the three reasons stay out of the way until asked for.
+  const [rejecting, setRejecting] = useState(null)
+  // One clock for the whole board: every "ready in 4:05" on screen reads
+  // this, so they all tick together instead of drifting apart.
+  const [now, setNow] = useState(() => Date.now())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -134,6 +155,25 @@ const OwnerDashboardPage = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (tab === 'orders') loadOrders()
   }, [tab, loadOrders])
+
+  // The prep-time buttons and rejection reasons, fetched once. On failure the
+  // DEFAULT_PREP_MINUTES fallback stands, so the board still works offline
+  // from this request — the server validates the chosen value either way.
+  useEffect(() => {
+    let active = true
+    getLifecycleOptions()
+      .then(response => { if (active) setPrepOptions(response.data.prep_minutes) })
+      .catch(() => { /* keep the fallback list */ })
+    return () => { active = false }
+  }, [])
+
+  // One second tick, only while the orders tab is open, so the countdowns to
+  // ready_at move without every card owning its own timer.
+  useEffect(() => {
+    if (tab !== 'orders') return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [tab])
 
   const handleCreateRestaurant = async (e) => {
     e.preventDefault()
@@ -253,6 +293,47 @@ const OwnerDashboardPage = () => {
       flashNotice('Order updated.')
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update order.')
+    }
+  }
+
+  // Accepting IS choosing a prep time — there is no separate accept step,
+  // because an acceptance without a committed time is what the old flow had
+  // and it told the customer and the rider nothing.
+  const handleAccept = async (orderId, prepMinutes) => {
+    setError('')
+
+    try {
+      await acceptOrder(orderId, prepMinutes)
+      await loadOrders()
+      flashNotice(`Order accepted · food due in ${prepMinutes} minutes.`)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to accept the order.')
+    }
+  }
+
+  const handleReject = async (orderId, reason) => {
+    setError('')
+
+    try {
+      await rejectOrder(orderId, reason)
+      setRejecting(null)
+      await loadOrders()
+      flashNotice('Order rejected.')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to reject the order.')
+    }
+  }
+
+  // The one button a rider's pickup depends on.
+  const handleFoodReady = async (orderId) => {
+    setError('')
+
+    try {
+      await markFoodReady(orderId)
+      await loadOrders()
+      flashNotice('Marked ready — a rider can collect it now.')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to mark the food ready.')
     }
   }
 
@@ -602,23 +683,60 @@ const OwnerDashboardPage = () => {
                       {order.status.replace(/_/g, ' ')}
                     </span>
 
+                    {/* A pending order is accepted BY choosing how long the
+                        food needs: the time buttons are the accept action, so
+                        there is no way to accept without committing to a
+                        minute. Reject stays a small link, because turning an
+                        order away should be the harder of the two. */}
                     {order.status === 'pending' && (
-                      <>
-                        <button
-                          onClick={() => handleUpdateOrderStatus(order.id, 'confirmed')}
-                          className="text-xs bg-green-700 text-white px-3 py-1 rounded-full
-                                     hover:bg-green-800"
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
-                          className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full
-                                     hover:bg-red-200"
-                        >
-                          Reject
-                        </button>
-                      </>
+                      <div className="w-full mt-2">
+                        <p className="text-xs text-gray-500 mb-2">
+                          Accept and tell the customer how long: 
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {prepOptions.map(minutes => (
+                            <button
+                              key={minutes}
+                              onClick={() => handleAccept(order.id, minutes)}
+                              className="text-sm font-bold bg-green-700 text-white px-4 py-2 rounded-full
+                                         hover:bg-green-800"
+                            >
+                              {minutes} min
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => setRejecting(rejecting === order.id ? null : order.id)}
+                            className="text-xs text-red-600 underline ml-1 hover:text-red-700"
+                            aria-expanded={rejecting === order.id}
+                          >
+                            Reject order
+                          </button>
+                        </div>
+
+                        {rejecting === order.id && (
+                          <div className="mt-3 p-3 bg-red-50 rounded-xl">
+                            <p className="text-xs text-red-800 mb-2">Why can you not take this order?</p>
+                            <div className="flex flex-wrap gap-2">
+                              {REJECTION_CHOICES.map(choice => (
+                                <button
+                                  key={choice.value}
+                                  onClick={() => handleReject(order.id, choice.value)}
+                                  className="text-xs bg-white border border-red-200 text-red-700 px-3 py-1
+                                             rounded-full hover:bg-red-100"
+                                >
+                                  {choice.label}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => setRejecting(null)}
+                                className="text-xs text-gray-500 underline px-2"
+                              >
+                                Keep it
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     )}
 
                     {order.status === 'confirmed' && (
@@ -638,6 +756,46 @@ const OwnerDashboardPage = () => {
                           Cancel
                         </button>
                       </>
+                    )}
+
+                    {/* Cooking: the countdown is to the ready_at the kitchen
+                        itself promised, and the ready button is the write the
+                        rider's pickup is waiting on. */}
+                    {order.status === 'preparing' && (
+                      <div className="w-full mt-2 flex flex-wrap items-center gap-3">
+                        <span className="text-sm font-bold text-orange-700">
+                          {readyCountdown(order.ready_at, now)
+                            ? `⏱ Ready in ${readyCountdown(order.ready_at, now)}`
+                            : order.ready_at
+                              ? `⏱ Past the ${readyAtLabel(order.ready_at)} promise`
+                              : '⏱ Cooking'}
+                        </span>
+                        <button
+                          onClick={() => handleFoodReady(order.id)}
+                          className="text-sm font-bold bg-emerald-600 text-white px-5 py-2 rounded-full
+                                     hover:bg-emerald-700"
+                        >
+                          ✅ Food is ready
+                        </button>
+                        <button
+                          onClick={() => handleUpdateOrderStatus(order.id, 'cancelled')}
+                          className="text-xs text-red-600 underline"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+
+                    {order.status === 'food_ready' && (
+                      <span className="text-xs text-emerald-700 font-semibold">
+                        Waiting for a rider to collect
+                      </span>
+                    )}
+
+                    {order.status === 'cancelled' && order.rejected_reason && (
+                      <span className="text-xs text-red-600">
+                        Rejected · {order.rejected_reason.replaceAll('_', ' ')}
+                      </span>
                     )}
                   </div>
                   {expandedOrder === order.id && order.status === 'out_for_delivery' && <div className="w-full"><LiveTrackingMap orderId={order.id} /></div>}

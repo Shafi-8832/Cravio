@@ -21,14 +21,29 @@ const ORDER_STATUSES = [
   'pending',
   'confirmed',
   'preparing',
+  // Between 'preparing' and 'out_for_delivery': the kitchen has finished and
+  // the food is sitting on the counter waiting for a rider. Added in
+  // migration 012; the whole point of the lifecycle rework is that a rider
+  // cannot confirm pickup until an order has passed through here.
+  'food_ready',
   'out_for_delivery',
   'delivered',
   'cancelled'
 ]
 
+// The owner's moves through PATCH /api/orders/:id/status. Accepting
+// (pending -> confirmed) and rejecting are NOT here: they need a prep time
+// and a reason respectively, so they have their own endpoints below. Marking
+// the food ready is its own endpoint too, because the timestamp it writes is
+// the gate the rider route checks.
+//
+// The database enforces the same arrows in trg_enforce_order_status_transition
+// (db/functions/order_lifecycle.sql). This map is what turns an illegal move
+// into a readable 409 before the trigger ever has to fire.
 const OWNER_STATUS_TRANSITIONS = {
-  pending: ['confirmed', 'cancelled'],
-  confirmed: ['preparing', 'cancelled']
+  confirmed: ['preparing', 'cancelled'],
+  preparing: ['cancelled'],
+  food_ready: ['cancelled']
 }
 
 // A customer may back out only while the restaurant has not started cooking.
@@ -38,6 +53,17 @@ const CUSTOMER_STATUS_TRANSITIONS = {
   pending: ['cancelled'],
   confirmed: ['cancelled']
 }
+
+// The five buttons the owner may choose from when accepting. A free-text
+// number would let one restaurant promise 3 minutes and another 400; a fixed
+// list keeps the promise comparable across the platform, and
+// chk_order_prep_minutes repeats it in the database.
+const PREP_MINUTE_OPTIONS = [10, 15, 20, 30, 45]
+
+// Why an order can be turned down. Kept short on purpose: the point is a
+// reason the platform can count and act on, not a free-text note nobody
+// reads. chk_order_rejected_reason repeats this list in the database.
+const REJECTION_REASONS = ['item_unavailable', 'kitchen_overloaded', 'closing_soon']
 
 // all the exceptions that can be thrown by the place_order function in the database 
 // are mapped to a more user-friendly error message and status code here. 
@@ -244,6 +270,15 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
         o.delivery_fee,
         o.total_amount,
         o.review_eligible,
+        -- The lifecycle facts the receipt needs to show a real stage rather
+        -- than a label: what was promised (prep_minutes, ready_at), what
+        -- happened (accepted_at, food_ready_at) and, if the restaurant said
+        -- no, why (rejected_reason).
+        o.prep_minutes,
+        o.accepted_at,
+        o.ready_at,
+        o.food_ready_at,
+        o.rejected_reason,
         -- Whether the rider has already been rated for this order, so the
         -- receipt can hide the rider form after a reload instead of offering
         -- a submission the API would reject with ALREADY_REVIEWED.
@@ -378,6 +413,14 @@ const getOrderDetailsWithDb = async (db, orderId, actor) => {
     review_eligible: row.review_eligible,
     rider_reviewed: row.rider_reviewed,
     created_at: row.created_at,
+    // The lifecycle facts. The receipt turns these into a real stage and a
+    // countdown; the rider screen uses food_ready_at to decide whether the
+    // pickup button can be pressed at all.
+    prep_minutes: row.prep_minutes,
+    accepted_at: row.accepted_at,
+    ready_at: row.ready_at,
+    food_ready_at: row.food_ready_at,
+    rejected_reason: row.rejected_reason,
     promo: row.promo_code_id
       ? {
           id: row.promo_code_id,
@@ -542,6 +585,11 @@ const listCustomerOrders = async (
         o.total_amount,
         o.delivery_address,
         o.created_at,
+        -- So the order list can show "ready at 8:21 PM" without opening
+        -- each receipt.
+        o.ready_at,
+        o.food_ready_at,
+        o.rejected_reason,
         r.id AS restaurant_id,
         r.name AS restaurant_name,
         rb.id AS branch_id,
@@ -618,6 +666,13 @@ const listRestaurantOrders = async (
         o.total_amount,
         o.delivery_address,
         o.created_at,
+        -- The owner's board draws a countdown to ready_at while an order is
+        -- preparing, so these come back with the list.
+        o.prep_minutes,
+        o.accepted_at,
+        o.ready_at,
+        o.food_ready_at,
+        o.rejected_reason,
         c.id AS customer_id,
         c.name AS customer_name,
         c.phone AS customer_phone,
@@ -690,9 +745,12 @@ const updateOrderStatus = async (
   // A customer only ever cancels; owners and admins drive the order forward.
   const isCustomer = actor.role === 'customer'
 
+  // 'confirmed' is deliberately absent for owners: accepting an order now
+  // requires a prep time, so it goes through acceptOrder() instead. Letting
+  // it through here would be a second way to accept that commits to nothing.
   const allowedTargets = isCustomer
     ? ['cancelled']
-    : ['confirmed', 'preparing', 'cancelled']
+    : ['preparing', 'cancelled']
 
   if (!allowedTargets.includes(newStatus)) {
     throw new OrderServiceError(
@@ -700,7 +758,11 @@ const updateOrderStatus = async (
       'VALIDATION_ERROR',
       isCustomer
         ? 'Customers can only cancel an order.'
-        : 'Restaurant owners can set status to confirmed, preparing, or cancelled.'
+        : newStatus === 'confirmed'
+          ? 'Accepting an order needs a prep time. Use POST /api/orders/:id/accept with prep_minutes.'
+          : newStatus === 'food_ready'
+            ? 'Use POST /api/orders/:id/food-ready to mark the food ready.'
+            : 'Restaurant owners can set status to preparing or cancelled.'
     )
   }
 
@@ -811,6 +873,291 @@ const updateOrderStatus = async (
         [orderId]
       )
     }
+
+    const order = await getOrderDetailsWithDb(client, orderId, actor)
+
+    await client.query('COMMIT')
+    return order
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+
+// ============================================================
+// RESTAURANT LIFECYCLE ACTIONS
+//
+// Three things only the restaurant that received the order may do:
+// accept it with a prep time, reject it with a reason, and say the food is
+// ready. They are separate functions rather than three more branches of
+// updateOrderStatus because each one writes its own columns and each one
+// needs its own validation before the status moves.
+// ============================================================
+
+
+// Loads the order, takes a row lock on it, and refuses unless the caller
+// owns the restaurant it was placed with (an admin passes either way).
+//
+// Shared by the three actions below so there is exactly one copy of the
+// ownership rule. Hiding the button in the owner dashboard is not
+// authorization: this check is what stops a different owner from accepting
+// someone else's order by putting its id in a curl command.
+//
+// FOR UPDATE OF o locks only the orders row, not the joined restaurant and
+// branch rows, which nothing here is changing.
+const lockOwnedOrder = async (client, orderId, actor) => {
+  const result = await client.query(
+    `
+      SELECT
+        o.id,
+        o.status,
+        o.promo_code_id,
+        o.prep_minutes,
+        o.ready_at,
+        o.food_ready_at,
+        r.owner_id
+      FROM orders o
+      JOIN restaurant_branches rb
+        ON rb.id = o.branch_id
+      JOIN restaurants r
+        ON r.id = rb.restaurant_id
+      WHERE o.id = $1
+      FOR UPDATE OF o
+    `,
+    [orderId]
+  )
+
+  if (result.rows.length === 0) {
+    throw new OrderServiceError(404, 'ORDER_NOT_FOUND', 'Order not found.')
+  }
+
+  const order = result.rows[0]
+
+  if (actor.role !== 'admin' && order.owner_id !== actor.id) {
+    throw new OrderServiceError(
+      403,
+      'ACCESS_DENIED',
+      'You can only manage orders from your own restaurant.'
+    )
+  }
+
+  return order
+}
+
+
+// POST /api/orders/:id/accept  { prep_minutes }
+//
+// Accepting is a promise, not an acknowledgement: the restaurant commits to
+// having the food ready at a particular minute, and that target is what the
+// customer's countdown, the owner's countdown and the rider's waiting screen
+// all read. ready_at is computed and stored here, once, from the server
+// clock — never sent by the client, and never recomputed on read, so the
+// promise cannot quietly move later.
+const acceptOrder = async (orderIdValue, prepMinutesValue, actor, database = pool) => {
+  const orderId = toPositiveInteger(orderIdValue, 'order id')
+
+  // Number() first so the JSON body "20" and 20 both work, then an exact
+  // membership test — not a range check — because the five options are the
+  // rule, and chk_order_prep_minutes says the same thing in SQL.
+  const prepMinutes = Number(prepMinutesValue)
+
+  if (!PREP_MINUTE_OPTIONS.includes(prepMinutes)) {
+    throw new OrderServiceError(
+      400,
+      'VALIDATION_ERROR',
+      `prep_minutes must be one of: ${PREP_MINUTE_OPTIONS.join(', ')}.`
+    )
+  }
+
+  const client = await database.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    const current = await lockOwnedOrder(client, orderId, actor)
+
+    if (current.status !== 'pending') {
+      throw new OrderServiceError(
+        409,
+        'INVALID_STATUS_TRANSITION',
+        `Only a pending order can be accepted. This one is ${current.status}.`
+      )
+    }
+
+    // Same guard the old accept had: a mobile-wallet order must have its
+    // reference verified first, so the kitchen never starts cooking for a
+    // payment that never arrived. Cash on delivery is settled on handover.
+    const payment = await client.query(
+      'SELECT method, status FROM payments WHERE order_id = $1 FOR UPDATE',
+      [orderId]
+    )
+
+    if (payment.rows[0]?.method !== 'cash_on_delivery' && payment.rows[0]?.status !== 'paid') {
+      throw new OrderServiceError(
+        409,
+        'PAYMENT_NOT_VERIFIED',
+        'Verify the mobile payment reference before accepting the order.'
+      )
+    }
+
+    // One statement for all four columns. CURRENT_TIMESTAMP is read inside
+    // the transaction, so accepted_at and ready_at are exactly
+    // prep_minutes apart however long the round trip took. The interval is
+    // built by multiplying a one-minute interval by the bound parameter,
+    // because an interval literal cannot take a placeholder.
+    //
+    // $1::int in both places: used once as an INTEGER column value and once
+    // as a multiplier, PostgreSQL deduces integer in one spot and double
+    // precision in the other and refuses the statement ("inconsistent types
+    // deduced for parameter $1"). The cast settles it.
+    await client.query(
+      `
+        UPDATE orders
+        SET status       = 'confirmed',
+            prep_minutes = $1::int,
+            accepted_at  = CURRENT_TIMESTAMP,
+            ready_at     = CURRENT_TIMESTAMP + ($1::int * INTERVAL '1 minute')
+        WHERE id = $2
+      `,
+      [prepMinutes, orderId]
+    )
+
+    const order = await getOrderDetailsWithDb(client, orderId, actor)
+
+    await client.query('COMMIT')
+    return order
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+
+// POST /api/orders/:id/reject  { reason }
+//
+// A rejection is a cancellation the restaurant made, with the reason kept.
+// It runs the same cleanup the customer's cancel does — the promo slot goes
+// back so the code is not burned on an order nobody got, and the unpaid
+// payment row is marked failed so it stops looking like money still coming.
+const rejectOrder = async (orderIdValue, reasonValue, actor, database = pool) => {
+  const orderId = toPositiveInteger(orderIdValue, 'order id')
+
+  if (!REJECTION_REASONS.includes(reasonValue)) {
+    throw new OrderServiceError(
+      400,
+      'VALIDATION_ERROR',
+      `reason must be one of: ${REJECTION_REASONS.join(', ')}.`
+    )
+  }
+
+  const client = await database.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    const current = await lockOwnedOrder(client, orderId, actor)
+
+    if (current.status !== 'pending') {
+      throw new OrderServiceError(
+        409,
+        'INVALID_STATUS_TRANSITION',
+        `Only a pending order can be rejected. This one is ${current.status}. Cancel it instead.`
+      )
+    }
+
+    const payment = await client.query(
+      'SELECT status FROM payments WHERE order_id = $1 FOR UPDATE',
+      [orderId]
+    )
+
+    if (payment.rows[0]?.status === 'paid') {
+      throw new OrderServiceError(
+        409,
+        'REFUND_REQUIRED',
+        'Payment is already received. Contact support to arrange a refund before rejecting.'
+      )
+    }
+
+    await client.query(
+      `
+        UPDATE orders
+        SET status          = 'cancelled',
+            rejected_reason = $1
+        WHERE id = $2
+      `,
+      [reasonValue, orderId]
+    )
+
+    // Same transaction as the status change, so the promo slot and the
+    // rejection either both land or neither does.
+    await refundPromoUsage(client, current.promo_code_id)
+
+    await client.query(
+      `
+        UPDATE payments
+        SET status = 'failed'
+        WHERE order_id = $1
+          AND status = 'unpaid'
+      `,
+      [orderId]
+    )
+
+    const order = await getOrderDetailsWithDb(client, orderId, actor)
+
+    await client.query('COMMIT')
+    return order
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+
+// POST /api/orders/:id/food-ready
+//
+// The one write that opens the pickup gate. Until food_ready_at is set,
+// pickup_delivery() raises FOOD_NOT_READY and no rider can take the order,
+// however many times they tap the button.
+//
+// The timestamp is the server's, not the client's: a phone with a wrong
+// clock (or an edited request) must not be able to claim the food was ready
+// an hour ago.
+const markFoodReady = async (orderIdValue, actor, database = pool) => {
+  const orderId = toPositiveInteger(orderIdValue, 'order id')
+
+  const client = await database.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    const current = await lockOwnedOrder(client, orderId, actor)
+
+    if (current.status !== 'preparing') {
+      throw new OrderServiceError(
+        409,
+        'INVALID_STATUS_TRANSITION',
+        current.status === 'food_ready'
+          ? 'This order is already marked ready.'
+          : `Only an order being prepared can be marked ready. This one is ${current.status}.`
+      )
+    }
+
+    await client.query(
+      `
+        UPDATE orders
+        SET status        = 'food_ready',
+            food_ready_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `,
+      [orderId]
+    )
 
     const order = await getOrderDetailsWithDb(client, orderId, actor)
 
@@ -1070,6 +1417,8 @@ const getOrderRoute = async (orderIdValue, actor, database = pool) => {
 
 module.exports = {
   ORDER_STATUSES,
+  PREP_MINUTE_OPTIONS,
+  REJECTION_REASONS,
   OrderServiceError,
   getOrderRoute,
   getOrderTracking,
@@ -1077,5 +1426,8 @@ module.exports = {
   listCustomerOrders,
   listRestaurantOrders,
   getOrderDetails,
-  updateOrderStatus
+  updateOrderStatus,
+  acceptOrder,
+  rejectOrder,
+  markFoodReady
 }

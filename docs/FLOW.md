@@ -2200,3 +2200,159 @@ LEFT JOIN active_item_offers aio ON aio.item_id = mi.id ...;
 ```
 No running offer → the LEFT JOIN gives NULL → COALESCE uses the menu price; the
 promo code is then applied to this already-discounted subtotal.
+
+---
+
+### Order lifecycle gating (prep-time promise, "food ready", and the pickup gate)
+
+**Files involved:** `backend/db/migrations/012_order_lifecycle.sql`,
+`backend/db/functions/order_lifecycle.sql`,
+`backend/db/functions/complete_delivery.sql`,
+`backend/services/orderService.js`, `backend/routes/orders.js`,
+`backend/routes/rider.js`, `backend/routes/profile.js`,
+`frontend/src/utils/orderLifecycle.js`, `frontend/src/services/ownerApi.js`,
+`frontend/src/pages/OwnerDashboardPage.jsx`,
+`frontend/src/pages/RiderDashboardPage.jsx`,
+`frontend/src/pages/MyOrdersPage.jsx`,
+`frontend/src/components/OrderReceipt.jsx`,
+`backend/tests/e2e.js`, `backend/tests/marketplace.js`, `backend/tests/tracking.js`
+
+**Flow (exam-level explanation):**
+
+The problem first. An order's `status` column used to be only a label. A
+restaurant could tap "start preparing" and a rider could confirm pickup two
+seconds later, and nothing anywhere checked whether food existed. Nothing
+depended on the status, so the status meant nothing.
+
+1. A customer places an order. It starts at status `pending`.
+
+2. The restaurant owner opens their dashboard and sees it. To accept it they
+   must press one of five time buttons — 10, 15, 20, 30 or 45 minutes. The
+   buttons **are** the accept action: there is no separate "Accept" button, so
+   there is no way to accept without saying how long the food will take.
+
+3. That button calls `POST /api/orders/:id/accept` with `prep_minutes`. The
+   server checks three things in order: that the caller owns the restaurant
+   this order was placed with (a "403 Forbidden" if not — hiding a button is
+   not security, so the check is on the server), that the number is one of
+   the five allowed values, and that the order is still `pending`. Then one
+   `UPDATE` writes four columns: `status = 'confirmed'`,
+   `prep_minutes`, `accepted_at = now`, and
+   `ready_at = now + prep_minutes`. `ready_at` is the **promise**, and it is
+   stored once rather than recomputed later, so it cannot quietly move.
+
+4. If the restaurant cannot take the order, "Reject order" opens a small
+   picker with exactly three reasons: out of an item, kitchen overloaded, or
+   closing soon. `POST /api/orders/:id/reject` stores the chosen one in
+   `rejected_reason`, sets the status to `cancelled`, and runs the same
+   cleanup any cancellation does — the promo code's usage count goes back
+   down so the code is not burnt on an order nobody received, and the unpaid
+   payment row is marked `failed` so it stops looking like money still
+   arriving. All of that happens in one **transaction** — a group of
+   statements that either all take effect (`COMMIT`) or none do
+   (`ROLLBACK`) — so a half-rejected order cannot exist.
+
+5. The owner presses "Start preparing". Status goes `confirmed` →
+   `preparing`, and the dashboard replaces the button with a live countdown
+   to `ready_at` and one prominent **"Food is ready"** button.
+
+6. Meanwhile a rider can already see the job and claim it, while the food is
+   still cooking. Claiming is not collecting.
+
+7. **The gate.** If the rider taps "Confirm pickup" now, it fails. The route
+   calls a **procedure** — a named multi-step routine stored inside
+   PostgreSQL — `pickup_delivery(order_id, rider_id)`. Its first checks are
+   that the delivery exists, that it belongs to *this* rider, and then:
+
+   ```
+   IF v_order.food_ready_at IS NULL THEN
+       RAISE EXCEPTION 'FOOD_NOT_READY';
+   ```
+
+   `RAISE EXCEPTION` aborts the whole transaction. The rider route maps that
+   name to **409 Conflict** with "The restaurant has not marked this food
+   ready yet." The check is inside the database on purpose: a check written
+   only in JavaScript would be skipped by a script, a psql session, or a
+   future endpoint written by someone who never read the old one.
+
+8. In the rider's screen the pickup button is disabled while
+   `food_ready_at` is null, and in its place the rider sees the restaurant's
+   own countdown — "Waiting for the restaurant — ready at 8:21 PM". That is
+   only the interface being honest; the real refusal is step 7.
+
+9. The kitchen finishes and presses "Food is ready".
+   `POST /api/orders/:id/food-ready` checks ownership again, requires the
+   order to be `preparing`, and writes `food_ready_at = now` with
+   `status = 'food_ready'`. The timestamp is the **server's** clock, never
+   the phone's, so an edited request cannot claim the food was ready an hour
+   ago.
+
+10. Now the rider's pickup succeeds: `pickup_delivery()` sets the delivery to
+    `picked_up` and the order to `out_for_delivery`, both in one transaction.
+
+11. Delivery and review flows continue exactly as before:
+    `complete_delivery()` closes the delivery, marks the order `delivered`
+    and review-eligible, settles cash on delivery and frees the rider.
+
+12. The customer's receipt names the real stage the whole way through —
+    waiting for the restaurant to accept, preparing with a countdown to
+    `ready_at`, food ready and a rider collecting, on the way, delivered.
+    If the restaurant rejected it, the stored reason is shown as a plain
+    sentence rather than a code.
+
+**And the rule nothing can skip.** A **trigger** is a piece of SQL the
+database runs by itself whenever a row changes.
+`trg_enforce_order_status_transition` is a `BEFORE UPDATE OF status` trigger
+on `orders`: before any status write lands, it compares the old status with
+the new one against a fixed map and raises an exception for anything that is
+not on it. `pending → confirmed | cancelled`,
+`confirmed → preparing | cancelled`, `preparing → food_ready | cancelled`,
+`food_ready → out_for_delivery | cancelled`,
+`out_for_delivery → delivered`, and `delivered` and `cancelled` go nowhere.
+The service layer checks the same arrows first, which is what produces a
+readable 409; the trigger is what makes the rule true for every caller.
+
+**The key SQL.**
+
+```sql
+-- The whole state machine as one lookup, inside the trigger function.
+v_allowed := CASE OLD.status
+    WHEN 'pending'          THEN ARRAY['confirmed', 'cancelled']
+    WHEN 'confirmed'        THEN ARRAY['preparing', 'cancelled']
+    WHEN 'preparing'        THEN ARRAY['food_ready', 'cancelled']
+    WHEN 'food_ready'       THEN ARRAY['out_for_delivery', 'cancelled']
+    WHEN 'out_for_delivery' THEN ARRAY['delivered']
+    ELSE ARRAY[]::TEXT[]
+END;
+IF NOT (NEW.status = ANY (v_allowed)) THEN
+    RAISE EXCEPTION 'ILLEGAL_STATUS_TRANSITION: ...' USING ERRCODE = 'CRV03';
+END IF;
+```
+One `CASE` returns the statuses that may follow the current one, and
+`= ANY` asks whether the requested one is among them. An empty array is how
+`delivered` and `cancelled` become final — every move out of them fails.
+
+```sql
+-- Accepting: the promise, written in one statement.
+UPDATE orders
+SET status       = 'confirmed',
+    prep_minutes = $1::int,
+    accepted_at  = CURRENT_TIMESTAMP,
+    ready_at     = CURRENT_TIMESTAMP + ($1::int * INTERVAL '1 minute')
+WHERE id = $2
+```
+`CURRENT_TIMESTAMP` is read inside the transaction, so `accepted_at` and
+`ready_at` are exactly `prep_minutes` apart however slow the request was.
+`$1::int` is cast in both places because the same parameter used as an
+integer column value and as an interval multiplier makes PostgreSQL deduce
+two different types and refuse the statement.
+
+```sql
+-- The gate, inside pickup_delivery().
+IF v_order.food_ready_at IS NULL THEN
+    RAISE EXCEPTION 'FOOD_NOT_READY';
+END IF;
+```
+Checked before the status check, because while the food is not ready the
+order is still `preparing`, and the generic transition error would hide the
+real reason from the rider.

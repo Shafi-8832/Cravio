@@ -10,7 +10,14 @@ BEGIN
   PERFORM 1 FROM rider_profiles WHERE user_id = p_rider_id FOR UPDATE;
   SELECT * INTO v_order FROM orders WHERE id = p_order_id FOR UPDATE;
   SELECT * INTO v_delivery FROM deliveries WHERE order_id = p_order_id FOR UPDATE;
-  IF v_delivery.id IS NULL OR v_delivery.rider_id <> p_rider_id THEN
+  -- Split in two so the route can answer 404 for a delivery that does not
+  -- exist and 403 for one that belongs to another rider, which is what it
+  -- did when these checks lived in JavaScript. pickup_delivery() in
+  -- order_lifecycle.sql raises the same two names.
+  IF v_delivery.id IS NULL THEN
+    RAISE EXCEPTION 'DELIVERY_NOT_FOUND';
+  END IF;
+  IF v_delivery.rider_id <> p_rider_id THEN
     RAISE EXCEPTION 'DELIVERY_NOT_ASSIGNED';
   END IF;
   IF v_delivery.delivery_status <> 'picked_up' OR v_order.status <> 'out_for_delivery' THEN
