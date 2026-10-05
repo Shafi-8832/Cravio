@@ -24,7 +24,7 @@ Words used below:
 | table `item_offers` | `backend/db/migrations/011_item_offers.sql` | one row = "dish X is Y% off from A to B" |
 | trigger `trg_prevent_overlapping_item_offers` | `backend/db/functions/item_offers.sql` | one dish may not have two offers at the same time |
 | view `active_item_offers` | `backend/db/functions/item_offers.sql` | offers running right now + discounted price |
-| demo data | `backend/db/seeds/demo_item_offers.sql` (`npm run seed:offers`) | 13 offers: 11 running, 1 expired, 1 in the future |
+| demo data | `backend/db/seeds/demo_item_offers.sql` (`npm run seed:offers`) | 30 offers: 28 running (4 end within hours, 24 last one to two weeks), 1 expired, 1 in the future |
 
 ### 1.1 The table
 
@@ -162,16 +162,20 @@ FROM promo_codes
 WHERE is_active = true AND expiry_date >= CURRENT_DATE AND used_count < usage_limit
 ORDER BY discount_percent DESC, code;
 
--- top 5 deals: biggest discount first, then the one ending sooner
+-- top 12 photographed deals: biggest discount first, then the one ending sooner
 SELECT offer_id, item_id, item_name, image_url, restaurant_id, restaurant_name,
        original_price::float8, discount_percent, discounted_price::float8, ends_at
 FROM active_item_offers
 WHERE is_available = true AND ordering_enabled = true
+  AND image_url IS NOT NULL AND btrim(image_url) <> ''
 ORDER BY discount_percent DESC, ends_at ASC, offer_id
-LIMIT 5;
+LIMIT 12;
 ```
 
-3. React alternates deal and promo slides. A deal slide shows the dish, the
+   A deal slide is built around the dish photo, so dishes without a photo
+   are skipped here (they still show in the "Today's deals" rail).
+3. React alternates deal and promo slides; once the promo codes run out, the
+   remaining deal slides follow one after another. A deal slide shows the dish, the
    restaurant, the new and struck-through old price, a "50% OFF" sticker, a
    countdown and "Order now" (→ that restaurant's menu). A promo slide shows
    the code as a ticket with a "Copy code" button.
@@ -396,9 +400,11 @@ the script changes nothing.
 
 ## 5. Demo data
 
-`npm run seed:offers` (re-runnable, one transaction) replaces the offers of 13
-chosen dishes: each named restaurant's Nth most expensive photographed dish.
-4 end within hours, 7 within days, 1 is already expired and 1 starts tomorrow.
+`npm run seed:offers` (re-runnable, one transaction) replaces the offers of 30
+chosen dishes: each named restaurant's Nth most expensive photographed dish,
+two or three per restaurant across all 14 restaurants. 4 end within hours, 24
+last one to two weeks (so the carousel stays full between demos), 1 is already
+expired and 1 starts tomorrow.
 Run it again before a demo to refresh the countdowns. It is a script rather than
 part of the migration because the times are relative to "now" and a migration
 runs only once.

@@ -22,8 +22,8 @@ function interleave(deals, promos) {
   return slides
 }
 
-// The hero carousel. Every slide comes from GET /api/home/banners: the five
-// biggest item deals running now and every usable promo code.
+// The hero carousel. Every slide comes from GET /api/home/banners: the twelve
+// biggest photographed item deals running now and every usable promo code.
 //   * auto-advances every 3 s, pauses while hovered / focused / touched
 //   * dots + previous/next buttons
 //   * swipeable on phones: the track is a CSS scroll-snap row, so the

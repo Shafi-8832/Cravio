@@ -2127,8 +2127,9 @@ rows into one per group so COUNT/SUM/MAX can be used.
 3. **The customer opens the home page.** Five requests go out together:
    banners, deals, popular, order-again, top-restaurants. Each needs a login
    (401 otherwise). Grey placeholder cards show while they load.
-4. **Carousel.** `/banners` returns usable promo codes and the five biggest
-   deals. The slides alternate deal/promo, move every 3 seconds, stop while the
+4. **Carousel.** `/banners` returns usable promo codes and the twelve biggest
+   deals that have a dish photo (a deal slide is built around the photo, so
+   dishes without one are skipped here). The slides alternate deal/promo, move every 3 seconds, stop while the
    mouse is over them, and can be swiped on a phone.
 5. **Rails.** Deals (ending soonest first, with a live countdown that removes a
    card when it hits zero), Popular right now (most ordered this week, topped

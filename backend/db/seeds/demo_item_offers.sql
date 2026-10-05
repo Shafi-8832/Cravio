@@ -5,9 +5,10 @@
 -- demo gives fresh countdowns. Runs as ONE transaction (the script wraps
 -- it in BEGIN/COMMIT): either every demo offer is replaced, or nothing.
 --
--- 13 offers on 12 restaurants' dishes (only dishes WITH a photo):
+-- 30 offers on the dishes of 14 restaurants (only dishes WITH a photo, so
+-- the home-page carousel has a photo for every deal slide):
 --   * 4 end within a few hours   -> short "ends in 1h 30m" countdowns
---   * 7 end in a few days
+--   * 24 run for one to two weeks, so the carousel stays full between demos
 --   * 1 already EXPIRED          -> must NOT appear in active_item_offers
 --   * 1 starts TOMORROW          -> must NOT appear yet either
 -- Those last two prove the view filters by time.
@@ -24,17 +25,38 @@ SELECT
     now() + plan.ends_in AS ends_at
 FROM (VALUES
     -- restaurant,        dish #, % off, starts in,          ends in
+    -- Each restaurant's top dish. The first four end within hours.
     ('Kacchi Bhai',        1, 25, INTERVAL '-1 hour',     INTERVAL '3 hours'),
     ('KFC',                1, 30, INTERVAL '-2 hours',    INTERVAL '5 hours'),
     ('Sultan''s Dine',     1, 40, INTERVAL '-30 minutes', INTERVAL '90 minutes'),
     ('Fry Bucket',         1, 20, INTERVAL '-1 hour',     INTERVAL '7 hours'),
-    ('Chillox',            1, 20, INTERVAL '-1 day',      INTERVAL '2 days'),
-    ('Domino''s Pizza',    1, 35, INTERVAL '-1 hour',     INTERVAL '4 days'),
-    ('BFC',                1, 15, INTERVAL '-1 day',      INTERVAL '6 days'),
-    ('Takeout',            1, 25, INTERVAL '-2 hours',    INTERVAL '3 days'),
-    ('Khana''s',           1, 20, INTERVAL '-1 day',      INTERVAL '5 days'),
-    ('Pizza Republic',     1, 50, INTERVAL '-3 hours',    INTERVAL '2 days'),
-    ('Chuli Kitchen',      1, 10, INTERVAL '-1 hour',     INTERVAL '8 days'),
+    ('Chillox',            1, 20, INTERVAL '-1 day',      INTERVAL '10 days'),
+    ('Domino''s Pizza',    1, 35, INTERVAL '-1 hour',     INTERVAL '12 days'),
+    ('BFC',                1, 15, INTERVAL '-1 day',      INTERVAL '14 days'),
+    ('Takeout',            1, 25, INTERVAL '-2 hours',    INTERVAL '9 days'),
+    ('Khana''s',           1, 20, INTERVAL '-1 day',      INTERVAL '11 days'),
+    ('Pizza Republic',     1, 50, INTERVAL '-3 hours',    INTERVAL '8 days'),
+    ('Chuli Kitchen',      1, 10, INTERVAL '-1 hour',     INTERVAL '14 days'),
+    ('Green Bowl',         1, 30, INTERVAL '-1 hour',     INTERVAL '10 days'),
+    ('The Burger Yard',    1, 35, INTERVAL '-2 hours',    INTERVAL '12 days'),
+    ('Wok & Roll',         1, 25, INTERVAL '-1 day',      INTERVAL '9 days'),
+    -- A second dish per restaurant (KFC and Chillox use dish #3, because
+    -- their dish #2 is the expired / future example below).
+    ('Kacchi Bhai',        2, 20, INTERVAL '-1 day',      INTERVAL '10 days'),
+    ('KFC',                3, 25, INTERVAL '-1 day',      INTERVAL '13 days'),
+    ('Sultan''s Dine',     2, 30, INTERVAL '-2 hours',    INTERVAL '11 days'),
+    ('Fry Bucket',         2, 15, INTERVAL '-1 day',      INTERVAL '8 days'),
+    ('Chillox',            3, 40, INTERVAL '-1 hour',     INTERVAL '9 days'),
+    ('Domino''s Pizza',    2, 20, INTERVAL '-1 day',      INTERVAL '14 days'),
+    ('BFC',                2, 30, INTERVAL '-2 hours',    INTERVAL '12 days'),
+    ('Takeout',            2, 20, INTERVAL '-1 hour',     INTERVAL '10 days'),
+    ('Khana''s',           2, 15, INTERVAL '-1 day',      INTERVAL '13 days'),
+    ('Pizza Republic',     2, 25, INTERVAL '-1 day',      INTERVAL '9 days'),
+    ('Chuli Kitchen',      2, 20, INTERVAL '-1 day',      INTERVAL '10 days'),
+    ('Green Bowl',         2, 15, INTERVAL '-1 day',      INTERVAL '8 days'),
+    ('The Burger Yard',    2, 20, INTERVAL '-1 day',      INTERVAL '11 days'),
+    ('Wok & Roll',         2, 30, INTERVAL '-3 hours',    INTERVAL '12 days'),
+    -- The two that prove the view filters by time.
     ('KFC',                2, 45, INTERVAL '-3 days',     INTERVAL '-1 day'),   -- expired
     ('Chillox',            2, 30, INTERVAL '1 day',       INTERVAL '3 days')    -- future
 ) AS plan(restaurant_name, dish_number, discount_percent, starts_in, ends_in)

@@ -29,8 +29,9 @@ const DEAL_COLUMNS = `
 // ============================================================
 // GET /api/home/banners
 // Any logged-in user
-// Carousel slides: every promo code that can still be used, plus the five
-// biggest item deals running now. Two queries in total, no per-item loop.
+// Carousel slides: every promo code that can still be used, plus the twelve
+// biggest photographed item deals running now. Two queries in total, no
+// per-item loop.
 // ============================================================
 router.get('/banners', async (req, res) => {
   try {
@@ -52,16 +53,20 @@ router.get('/banners', async (req, res) => {
       ORDER BY discount_percent DESC, code
     `)
 
-    // Top 5 deals: biggest discount first; if two are equal, the one ending
+    // Top 12 deals: biggest discount first; if two are equal, the one ending
     // sooner first (more urgent). Unavailable dishes and restaurants that do
-    // not take orders are hidden — nobody could buy them.
+    // not take orders are hidden — nobody could buy them. A deal slide is
+    // built around the dish photo, so dishes without one are left out here
+    // (they still appear in the "Today's deals" rail).
     const dealsResult = await pool.query(`
       SELECT ${DEAL_COLUMNS}
       FROM active_item_offers
       WHERE is_available = true
         AND ordering_enabled = true
+        AND image_url IS NOT NULL
+        AND btrim(image_url) <> ''
       ORDER BY discount_percent DESC, ends_at ASC, offer_id
-      LIMIT 5
+      LIMIT 12
     `)
 
     res.json({
