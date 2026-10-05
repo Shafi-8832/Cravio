@@ -2099,7 +2099,7 @@ FROM branches_by_distance($1, $2, $3);
 Parameterized (`$1` restaurant id, `$2` lat, `$3` lng); `::float8` makes the
 NUMERIC values arrive in JSON as numbers instead of strings.
 
-### Dynamic customer home page (offers carousel, deals and food rails)
+### Dynamic home page (offers carousel, deals and food rails)
 
 **Files involved:**
 - `backend/db/migrations/011_item_offers.sql` — `item_offers` table, CHECKs, index
@@ -2107,7 +2107,7 @@ NUMERIC values arrive in JSON as numbers instead of strings.
 - `backend/db/seeds/demo_item_offers.sql`, `backend/scripts/seedOffers.js` — `npm run seed:offers`
 - `backend/db/functions/place_order.sql` — prices from `active_item_offers` at checkout
 - `backend/routes/home.js` (mounted at `/api/home` in `backend/server.js`), `backend/routes/cart.js`, `backend/routes/menu.js`
-- `frontend/src/services/homeApi.js`, `frontend/src/utils/time.js`, `frontend/src/components/home/*` (`HeroCarousel`, `HomeRails`, `Rail`, `HomeCards`, `useCustomerHome`, `useNow`), `frontend/src/pages/HomePage.jsx`, `frontend/src/pages/RestaurantPage.jsx`, `frontend/src/pages/CheckoutPage.jsx`, `frontend/src/index.css`
+- `frontend/src/services/homeApi.js`, `frontend/src/utils/time.js`, `frontend/src/components/home/*` (`HeroCarousel`, `HomeRails`, `Rail`, `HomeCards`, `useHomeSections`, `useNow`), `frontend/src/pages/HomePage.jsx`, `frontend/src/pages/RestaurantPage.jsx`, `frontend/src/pages/CheckoutPage.jsx`, `frontend/src/index.css`
 - Full explanation: `docs/dynamic-home.md`
 
 **Flow (exam-level explanation):**
@@ -2124,13 +2124,19 @@ rows into one per group so COUNT/SUM/MAX can be used.
 2. **"Running now" is a view.** `active_item_offers` keeps only offers that have
    started and not ended, and computes the discounted price rounded to whole
    taka. Every other part of the app reads offers through this view.
-3. **The customer opens the home page.** Five requests go out together:
-   banners, deals, popular, order-again, top-restaurants. Each needs a login
-   (401 otherwise). Grey placeholder cards show while they load.
+3. **A guest or customer opens the home page.** The requests go out
+   together: banners, deals, popular, top-restaurants, and — only for a
+   logged-in customer — order-again. The first four are public catalogue data
+   (like the restaurant list), so a visitor who has not signed up yet sees the
+   same live page. Order-again is one person's own history, so it needs a
+   login (401) and the customer role (403); a guest never asks for it and
+   that rail stays hidden. Grey placeholder cards show while they load.
 4. **Carousel.** `/banners` returns usable promo codes and the twelve biggest
    deals that have a dish photo (a deal slide is built around the photo, so
    dishes without one are skipped here). The slides alternate deal/promo, move every 3 seconds, stop while the
-   mouse is over them, and can be swiped on a phone.
+   mouse is over them, and can be swiped on a phone. If nothing is running (no
+   usable promo code and no deal), the static "Your cravings, delivered."
+   welcome hero is shown in its place, so the top of the page is never empty.
 5. **Rails.** Deals (ending soonest first, with a live countdown that removes a
    card when it hits zero), Popular right now (most ordered this week, topped
    up with top-rated kitchens' dishes), Order again (this customer's

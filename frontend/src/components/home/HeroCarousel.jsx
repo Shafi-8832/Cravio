@@ -28,7 +28,8 @@ function interleave(deals, promos) {
 //   * dots + previous/next buttons
 //   * swipeable on phones: the track is a CSS scroll-snap row, so the
 //     browser's own scrolling does the swiping
-export default function HeroCarousel({ banners, loading }) {
+// `fallback` is shown instead when there is no running offer to slide through.
+export default function HeroCarousel({ banners, loading, fallback = null }) {
   const trackRef = useRef(null)
   const [index, setIndex] = useState(0)
   const [paused, setPaused] = useState(false)
@@ -79,7 +80,7 @@ export default function HeroCarousel({ banners, loading }) {
 
   if (loading) return <div className="skeleton min-h-[380px] rounded-[26px]" aria-label="Loading offers" />
   if (banners.error) return <p role="alert" className="notice-error">{banners.error}</p>
-  if (count === 0) return null
+  if (count === 0) return fallback
 
   return <section aria-roledescription="carousel" aria-label="Today’s offers"
     onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}

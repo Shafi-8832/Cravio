@@ -9,27 +9,33 @@ function settle(result, pickRows, fallbackMessage) {
   return { rows: [], error: errorMessage(result.reason, fallbackMessage) }
 }
 
-// Loads every customer home section at once (five requests in parallel).
+// Loads every home page section at once (requests in parallel), for guests
+// and customers alike. "Order again" is one person's own history, so it is
+// only requested for a logged-in customer; a guest gets an empty list and
+// that rail simply hides itself.
 // Returns null while loading, then { banners, deals, popular, orderAgain, topRated }.
-export default function useCustomerHome(enabled) {
-  const [sections, setSections] = useState(null)
+export default function useHomeSections(isCustomer) {
+  // The result remembers whether it was loaded for a customer or a guest.
+  // After logging in or out it no longer matches, so the page shows the
+  // loading placeholders instead of the other user's sections.
+  const [loaded, setLoaded] = useState({ isCustomer: null, sections: null })
 
   useEffect(() => {
-    if (!enabled) return
     let active = true
-    Promise.allSettled([getHomeBanners(), getHomeDeals(12), getHomePopular(), getOrderAgain(), getTopRestaurants()])
+    const orderAgainRequest = isCustomer ? getOrderAgain() : Promise.resolve({ data: { restaurants: [] } })
+    Promise.allSettled([getHomeBanners(), getHomeDeals(12), getHomePopular(), orderAgainRequest, getTopRestaurants()])
       .then(([banners, deals, popular, orderAgain, topRated]) => {
         if (!active) return
-        setSections({
+        setLoaded({ isCustomer, sections: {
           banners: settle(banners, data => data, 'Could not load today’s offers.'),
           deals: settle(deals, data => data.deals, 'Could not load today’s deals.'),
           popular: settle(popular, data => data.items, 'Could not load popular dishes.'),
           orderAgain: settle(orderAgain, data => data.restaurants, 'Could not load your past restaurants.'),
           topRated: settle(topRated, data => data.restaurants, 'Could not load top-rated restaurants.')
-        })
+        } })
       })
     return () => { active = false }
-  }, [enabled])
+  }, [isCustomer])
 
-  return sections
+  return loaded.isCustomer === isCustomer ? loaded.sections : null
 }

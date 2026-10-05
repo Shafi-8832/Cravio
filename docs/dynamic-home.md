@@ -1,7 +1,7 @@
-# Dynamic customer home page (offers, deals, rails)
+# Dynamic home page (offers, deals, rails)
 
-Everything on the logged-in customer's home page comes from PostgreSQL through
-`/api/home/*`. React holds no banner, deal or food list of its own. The
+Everything on the home page — for guests and logged-in customers alike — comes
+from PostgreSQL through `/api/home/*`. React holds no banner, deal or food list of its own. The
 database does the filtering (which offers are running now), the ranking
 (popular, top rated, most recent) and the discount maths.
 
@@ -142,16 +142,23 @@ WHERE io.starts_at <= now()
 
 ## 2. Each section: load → endpoint → SQL → render
 
-All `/api/home/*` routes sit behind `authenticateToken` (no token → 401).
-`frontend/src/components/home/useCustomerHome.js` fires the five requests in
+`/banners`, `/deals`, `/popular` and `/top-restaurants` are **public**: they
+show catalogue data (dishes, prices, promo codes, ratings), the same kind of
+data `GET /api/restaurants` already shows to visitors, so a guest sees a live
+home page before signing up. Only `/order-again` reads one person's order
+history, so only it uses `authenticateToken` (no token → 401) and
+`requireRole('customer')` (other roles → 403).
+
+`frontend/src/components/home/useHomeSections.js` fires the requests in
 parallel with `Promise.allSettled`, so one failing section shows its own error
-and the others still render.
+and the others still render. For a guest it does not call `/order-again` at
+all; that rail gets an empty list and hides itself.
 
 ### 2.1 Hero carousel — `GET /api/home/banners`
 
-1. The customer opens `/`. `HomePage` sees role `customer` and renders
-   `HeroCarousel` instead of the static welcome hero (guests keep that one:
-   the API needs a login).
+1. A guest or customer opens `/`. `HomePage` renders `HeroCarousel`. If no
+   promo code or deal is running (zero slides), the carousel shows the static
+   welcome hero instead, so the top of the page is never empty.
 2. The server runs two queries:
 
 ```sql
@@ -255,7 +262,8 @@ Cards show "🔥 1 ordered this week" or "★ 5.0 top-rated kitchen".
 
 ### 2.4 Order again — `GET /api/home/order-again` (graded: complex query + authorization)
 
-`requireRole('customer')` → 403 for owners, riders and admins.
+`authenticateToken` → 401 without a login; `requireRole('customer')` → 403 for
+owners, riders and admins. The frontend only requests it for a customer.
 
 ```sql
 SELECT r.id AS restaurant_id, r.name, r.cuisine, r.image_url, r.logo_url,

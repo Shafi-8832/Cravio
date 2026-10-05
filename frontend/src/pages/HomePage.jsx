@@ -6,7 +6,7 @@ import FoodImage from '../components/FoodImage'
 import NearbyRestaurants from '../components/map/NearbyRestaurants'
 import HeroCarousel from '../components/home/HeroCarousel'
 import HomeRails from '../components/home/HomeRails'
-import useCustomerHome from '../components/home/useCustomerHome'
+import useHomeSections from '../components/home/useHomeSections'
 import { listRestaurants } from '../services/restaurantApi'
 import { getFavorites, saveFavorite, removeFavorite } from '../services/accountApi'
 import { useAuth } from '../context/AuthContext'
@@ -19,11 +19,11 @@ const categories = [
 ]
 export default function HomePage() {
   const { user } = useAuth()
-  // Customers get the database-driven home: offers carousel + rails, all
-  // from /api/home/* (those endpoints need a login, so guests keep the
-  // general welcome hero). null while the five requests are in flight.
+  // Guests and customers both get the database-driven home: offers carousel
+  // + rails from /api/home/*. Only the "Order again" rail is customer-only.
+  // null while the requests are in flight.
   const isCustomer = user?.role === 'customer'
-  const home = useCustomerHome(isCustomer)
+  const home = useHomeSections(isCustomer)
   const [restaurants, setRestaurants] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -84,25 +84,28 @@ export default function HomePage() {
   }
   const shown = restaurants
   const discover = () => document.getElementById('restaurants').scrollIntoView({ behavior: 'smooth' })
+  // Shown in place of the carousel when no promo code or deal is running,
+  // so the top of the page is never empty.
+  const welcomeHero = <section className="hero-panel grid md:grid-cols-[1.12fr_1fr] min-h-[415px]">
+    <div className="px-7 py-10 md:px-12 md:py-12 relative z-10">
+      <p className="eyebrow flex items-center gap-2 mb-5"><span className="w-5 h-px bg-orange-600" />Good food. Good mood.</p>
+      <h1 className="hero-title">Your cravings,<br /><span className="text-orange-600">delivered.</span></h1>
+      <p className="text-stone-600 text-sm md:text-base max-w-sm leading-relaxed mt-5">From a comforting plate of biryani to your favourite burger. Find your next happy bite.</p>
+      <button onClick={discover} className="btn-primary mt-7 !px-6">Find my food <Icon name="arrow" size={18} /></button>
+      <p className="text-xs text-green-900/70 mt-5 flex items-center gap-2"><span>🇧🇩</span> Discover flavours across all 8 divisions</p>
+    </div>
+    <div className="relative min-h-[290px] md:min-h-[420px] flex items-center justify-center pb-8 md:pb-0">
+      <div className="absolute w-[460px] h-[460px] rounded-full border border-green-900/10" />
+      <div className="absolute w-[540px] h-[540px] rounded-full border border-green-900/5" />
+      <FoodImage src={foodPhotos.hero} alt="Fresh burger — illustrative food photography" className="hero-photo relative -rotate-6" eager />
+      <span aria-hidden="true" className="float-food absolute text-5xl top-2 left-4 md:top-8 md:left-8">🌶️</span>
+      <span aria-hidden="true" className="float-food absolute text-5xl right-5 top-14">🥬</span>
+      <span aria-hidden="true" className="float-food absolute text-4xl bottom-7 right-12">🍟</span>
+      <div className="absolute bottom-9 left-7 md:bottom-10 md:left-0 bg-white rounded-xl shadow-lg px-4 py-3 flex items-center gap-3 -rotate-3"><span className="text-2xl">😋</span><div><p className="text-xs font-extrabold">A little joy in every order</p><p className="text-[10px] text-stone-500 mt-1">Made for your food mood</p></div></div>
+    </div>
+  </section>
   return <main className="page-shell pt-7 pb-12">
-    {isCustomer ? <HeroCarousel loading={home === null} banners={home?.banners} /> : <section className="hero-panel grid md:grid-cols-[1.12fr_1fr] min-h-[415px]">
-      <div className="px-7 py-10 md:px-12 md:py-12 relative z-10">
-        <p className="eyebrow flex items-center gap-2 mb-5"><span className="w-5 h-px bg-orange-600" />Good food. Good mood.</p>
-        <h1 className="hero-title">Your cravings,<br /><span className="text-orange-600">delivered.</span></h1>
-        <p className="text-stone-600 text-sm md:text-base max-w-sm leading-relaxed mt-5">From a comforting plate of biryani to your favourite burger. Find your next happy bite.</p>
-        <button onClick={discover} className="btn-primary mt-7 !px-6">Find my food <Icon name="arrow" size={18} /></button>
-        <p className="text-xs text-green-900/70 mt-5 flex items-center gap-2"><span>🇧🇩</span> Discover flavours across all 8 divisions</p>
-      </div>
-      <div className="relative min-h-[290px] md:min-h-[420px] flex items-center justify-center pb-8 md:pb-0">
-        <div className="absolute w-[460px] h-[460px] rounded-full border border-green-900/10" />
-        <div className="absolute w-[540px] h-[540px] rounded-full border border-green-900/5" />
-        <FoodImage src={foodPhotos.hero} alt="Fresh burger — illustrative food photography" className="hero-photo relative -rotate-6" eager />
-        <span aria-hidden="true" className="float-food absolute text-5xl top-2 left-4 md:top-8 md:left-8">🌶️</span>
-        <span aria-hidden="true" className="float-food absolute text-5xl right-5 top-14">🥬</span>
-        <span aria-hidden="true" className="float-food absolute text-4xl bottom-7 right-12">🍟</span>
-        <div className="absolute bottom-9 left-7 md:bottom-10 md:left-0 bg-white rounded-xl shadow-lg px-4 py-3 flex items-center gap-3 -rotate-3"><span className="text-2xl">😋</span><div><p className="text-xs font-extrabold">A little joy in every order</p><p className="text-[10px] text-stone-500 mt-1">Made for your food mood</p></div></div>
-      </div>
-    </section>}
+    <HeroCarousel loading={home === null} banners={home?.banners} fallback={welcomeHero} />
 
     <section className="mt-10" aria-label="Food categories">
       <div className="flex justify-between items-center mb-5"><h2 className="section-heading !text-2xl">What sounds good?</h2><span className="hidden sm:inline text-xs text-stone-500">Follow your cravings ✨</span></div>
@@ -111,12 +114,8 @@ export default function HomePage() {
       </div>
     </section>
 
-    {isCustomer && <HomeRails home={home} />}
+    <HomeRails home={home} />
 
-    {!isCustomer && <div className="grid sm:grid-cols-2 gap-5 mt-7">
-      <button onClick={() => { setCuisine('biryani'); discover() }} className="promo-card rounded-2xl bg-[#fbe7d5] p-6 text-left flex items-center"><div className="relative z-10 max-w-[65%]"><p className="eyebrow !text-[10px] mb-2">The comfort collection</p><h3 className="text-xl font-extrabold">Big flavour.<br />Bigger biryani love.</h3><span className="text-xs font-semibold inline-flex items-center gap-1 mt-3">Explore biryani <Icon name="arrow" size={14} /></span></div><span className="text-8xl absolute right-4 -rotate-12" aria-hidden="true">🍛</span></button>
-      <button onClick={() => { setCuisine(''); setDivision('Dhaka'); discover() }} className="promo-card rounded-2xl bg-[#e8edde] p-6 text-left flex items-center"><div className="relative z-10 max-w-[65%]"><p className="eyebrow !text-[10px] !text-green-800 mb-2">Across all 8 divisions</p><h3 className="text-xl font-extrabold">Local favourites,<br />near your area.</h3><span className="text-xs font-semibold inline-flex items-center gap-1 mt-3">Discover Dhaka <Icon name="arrow" size={14} /></span></div><span className="text-8xl absolute right-5 rotate-12" aria-hidden="true">🥘</span></button>
-    </div>}
 
     <section id="restaurants" className="mt-11 scroll-mt-28">
       <div className="flex items-end justify-between gap-4 mb-5"><div><p className="eyebrow mb-2">Find your next favourite</p><h2 className="section-heading">Restaurants to love</h2></div><span className="text-xs text-stone-500 hidden sm:inline">{loading ? 'Finding good food…' : total + ' restaurants to explore'}</span></div>

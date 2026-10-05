@@ -5,8 +5,11 @@ const requireRole = require('../middleware/roleCheck')
 
 const router = express.Router()
 
-// Every home-page rail needs a logged-in user: no token -> 401.
-router.use(authenticateToken)
+// Banners, deals, popular dishes and top restaurants are public catalogue
+// data — the same kind of thing GET /api/restaurants already shows to
+// guests — so a visitor sees a live home page before signing up. Only
+// "Order again" reads one person's own order history, so only that route
+// asks for a login (401) and the customer role (403).
 
 // The columns every deal/dish card needs, read from the active_item_offers
 // VIEW. The view already decided "is this offer running now?" and computed
@@ -28,7 +31,7 @@ const DEAL_COLUMNS = `
 
 // ============================================================
 // GET /api/home/banners
-// Any logged-in user
+// Public (no login needed)
 // Carousel slides: every promo code that can still be used, plus the twelve
 // biggest photographed item deals running now. Two queries in total, no
 // per-item loop.
@@ -83,7 +86,7 @@ router.get('/banners', async (req, res) => {
 
 // ============================================================
 // GET /api/home/deals?limit=12
-// Any logged-in user
+// Public (no login needed)
 // Today's deals, the ones ending soonest first (most urgent at the left).
 // ============================================================
 router.get('/deals', async (req, res) => {
@@ -115,7 +118,7 @@ router.get('/deals', async (req, res) => {
 
 // ============================================================
 // GET /api/home/popular
-// Any logged-in user
+// Public (no login needed)
 // GRADED COMPLEX QUERY — "Popular right now": the 10 dishes ordered most
 // in the last 7 days, topped up with top-rated restaurants' dishes so the
 // rail is never empty.
@@ -219,11 +222,11 @@ router.get('/popular', async (req, res) => {
 
 // ============================================================
 // GET /api/home/order-again
-// customer only (403 for other roles)
+// customer only (401 without a login, 403 for other roles)
 // GRADED COMPLEX QUERY + AUTHORIZATION — restaurants this customer has
 // ordered from, most recent first, with order count and last order date.
 // ============================================================
-router.get('/order-again', requireRole('customer'), async (req, res) => {
+router.get('/order-again', authenticateToken, requireRole('customer'), async (req, res) => {
   try {
     // $1 is req.user.id — taken from the verified login token by
     // authenticateToken, never from the URL or the body, so a customer
@@ -272,7 +275,7 @@ router.get('/order-again', requireRole('customer'), async (req, res) => {
 
 // ============================================================
 // GET /api/home/top-restaurants
-// Any logged-in user
+// Public (no login needed)
 // Best-rated restaurants with at least one review.
 // ============================================================
 router.get('/top-restaurants', async (req, res) => {
