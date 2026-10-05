@@ -1,5 +1,19 @@
 # Deploying Cravio (Vercel + Render + Neon)
 
+**Live deployment**
+
+| Part | URL |
+|---|---|
+| Frontend (Vercel project `cravio`) | https://cravio-rho.vercel.app |
+| Backend (Render service `cravio-api`) | https://cravio-api.onrender.com |
+| Health check | https://cravio-api.onrender.com/api/health |
+
+The frontend is deployed with the Vercel CLI from `frontend/`
+(`npx vercel deploy --prod`), so a new frontend release is that one command.
+Render was created from `render.yaml` using the public repository URL, so
+after pushing backend changes use **Manual Deploy** in the Render dashboard
+(or connect GitHub in the service settings to deploy on every push).
+
 ```
 Browser ──HTTPS──▶ Vercel (React build, static files)
    │
