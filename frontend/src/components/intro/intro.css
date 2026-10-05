@@ -290,3 +290,11 @@
   .intro-overlay.is-reduced { animation: intro-reduced-out var(--reducedMotion-duration) linear forwards !important; }
   .intro-overlay .intro-reduced-logo { animation: intro-reduced-logo var(--reducedMotion-duration) linear both !important; }
 }
+
+/* ---------- opened in a background tab ---------- */
+/* Every animation (delays included) stays frozen at its first frame until
+   the tab is first looked at; IntroOverlay then removes .is-waiting and the
+   scene plays from the start. Last in the file, so it also beats the
+   reduced-motion rules above. */
+.intro-overlay.is-waiting,
+.intro-overlay.is-waiting * { animation-play-state: paused !important; }

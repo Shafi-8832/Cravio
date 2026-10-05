@@ -2605,13 +2605,15 @@ one tab and is wiped when that tab is closed.
    delays them.
 2. **Should the intro play?** `IntroOverlay` decides once, on first load. It
    plays only if the tab opened on the landing page `/` (a deep link such as
-   `/restaurants/12` or `/login` skips it), the key `cravio:intro-played` is not
-   in sessionStorage, and the tab is visible. Storage access is wrapped in
-   try/catch, so blocked storage only means "nothing is remembered".
+   `/restaurants/12` or `/login` skips it) and the key `cravio:intro-played` is
+   not in sessionStorage. Storage access is wrapped in try/catch, so blocked
+   storage only means "nothing is remembered". If the link was opened in a
+   background tab (Ctrl/Cmd-click), the overlay waits frozen on its first frame
+   and the scene starts the first time the tab is looked at.
 3. **Which version?** If the system setting "reduce motion" is on, it shows only
    the logo fading in and out within 1 second. Otherwise it plays the full scene.
-4. **While it shows**, the key is written to sessionStorage (so a reload in the
-   same tab does not replay it) and page scrolling is locked by setting
+4. **Once it starts playing**, the key is written to sessionStorage (so a
+   reload in the same tab does not replay it) and page scrolling is locked by setting
    `overflow: hidden` on `<html>` and `<body>`. The old values are put back after.
 5. **The timeline.** All times live in one object, `INTRO_TIMING`, at the top of
    `IntroOverlay.jsx`. They are passed to the CSS as variables such as

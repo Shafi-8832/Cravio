@@ -68,16 +68,13 @@ function rememberPlayed() {
 }
 
 // Decided once, when the app first loads:
-//   'none'    -> not on the landing page, already seen in this tab, or the
-//                tab was opened in the background (nobody would see it, and
-//                browsers slow down timers in hidden tabs)
+//   'none'    -> not on the landing page, or already seen in this tab
 //   'reduced' -> the system asks for less motion: a 1-second logo fade only
 //   'full'    -> the whole scene
 function chooseMode() {
   if (typeof window === 'undefined') return 'none'
   if (window.location.pathname !== INTRO_PATH) return 'none'
   if (alreadyPlayed()) return 'none'
-  if (document.visibilityState === 'hidden') return 'none'
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   return reduceMotion ? 'reduced' : 'full'
 }
@@ -97,14 +94,21 @@ function timingVariables() {
 // data underneath at the same time, so the intro never delays anything.
 export default function IntroOverlay() {
   const [mode] = useState(chooseMode)
-  // 'playing' -> 'exiting' (circular reveal) -> 'done' (removed)
-  const [phase, setPhase] = useState('playing')
+  // 'waiting' -> 'playing' -> 'exiting' (circular reveal) -> 'done' (removed)
+  // A link opened in a background tab (Ctrl/Cmd-click, middle-click) starts
+  // in 'waiting': the overlay is there but frozen on its first frame, and the
+  // scene starts from the beginning the first time the tab is looked at.
+  const [phase, setPhase] = useState(() => document.visibilityState === 'hidden' ? 'waiting' : 'playing')
   const visible = mode !== 'none' && phase !== 'done'
 
-  // Remember the intro for this tab, and lock page scrolling while it shows.
+  // Remember the intro for this tab once it has really started playing.
+  useEffect(() => {
+    if (mode !== 'none' && phase === 'playing') rememberPlayed()
+  }, [mode, phase])
+
+  // Lock page scrolling while the overlay is on screen.
   useEffect(() => {
     if (!visible) return
-    rememberPlayed()
     const html = document.documentElement
     const body = document.body
     const previous = { html: html.style.overflow, body: body.style.overflow }
@@ -119,7 +123,7 @@ export default function IntroOverlay() {
   // The timeline's two state changes. Everything in between is CSS
   // animation delays, all counted from the same moment the overlay appeared.
   useEffect(() => {
-    if (!visible) return
+    if (!visible || phase === 'waiting') return
     let delay
     let next
     if (mode === 'reduced') {
@@ -138,11 +142,9 @@ export default function IntroOverlay() {
 
   // "Skip intro" and Esc jump straight to the exit (or close at once when
   // motion is reduced). Skipping during the exit changes nothing.
-  // Leaving the tab mid-intro ends it, so nobody comes back to a half-played
-  // scene waiting on a slowed-down background timer.
   function skip() {
     if (mode === 'reduced') setPhase('done')
-    else setPhase(current => current === 'playing' ? 'exiting' : current)
+    else setPhase(current => current === 'playing' || current === 'waiting' ? 'exiting' : current)
   }
 
   useEffect(() => {
@@ -150,8 +152,15 @@ export default function IntroOverlay() {
     function handleKey(event) {
       if (event.key === 'Escape') skip()
     }
+    // Tab shown for the first time -> start the scene.
+    // Tab left mid-intro -> end it, so nobody comes back to a half-played
+    // scene waiting on a timer the browser has slowed down in the background.
     function handleVisibility() {
-      if (document.visibilityState === 'hidden') setPhase('done')
+      if (document.visibilityState === 'visible') {
+        setPhase(current => current === 'waiting' ? 'playing' : current)
+      } else {
+        setPhase(current => current === 'waiting' ? current : 'done')
+      }
     }
     window.addEventListener('keydown', handleKey)
     document.addEventListener('visibilitychange', handleVisibility)
@@ -165,6 +174,7 @@ export default function IntroOverlay() {
 
   let className = 'intro-overlay'
   if (mode === 'reduced') className += ' is-reduced'
+  if (phase === 'waiting') className += ' is-waiting'
   if (phase === 'exiting') className += ' is-exiting'
 
   // No role="dialog" / focus trap on purpose: the page underneath stays
