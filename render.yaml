@@ -1,0 +1,45 @@
+# Render Blueprint for the Cravio API (Render → New → Blueprint → this repo).
+# It describes the backend service so the dashboard settings live in Git.
+# Values marked `sync: false` are secrets: Render asks for them when the
+# Blueprint is first applied, and they are never stored in this file.
+# See docs/DEPLOYMENT.md for what each one is.
+services:
+  - type: web
+    name: cravio-api
+    runtime: node
+    plan: free
+    # Same AWS region as the Neon database (ap-southeast-1), so every query
+    # stays in one data centre.
+    region: singapore
+    rootDir: backend
+    buildCommand: npm install
+    # Never migrate or seed here: database changes are applied by hand.
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      # Render generates a fresh random value for each on first deploy.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_HMAC_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SMS_PROVIDER
+        value: bulksmsbd
+      - key: BULKSMSBD_API_KEY
+        sync: false
+      - key: BULKSMSBD_SENDER_ID
+        sync: false
+      - key: ALLOW_MANUAL_PAYMENTS
+        value: "false"

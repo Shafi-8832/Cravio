@@ -47,9 +47,10 @@ const run = async () => {
     const result = await pool.query(
       `
         INSERT INTO users
-          (name, email, password, role, phone, is_active)
+          (name, email, password, role, phone, is_active, email_verified_at, phone_verified_at)
         VALUES
-          ($1, $2, $3, 'admin', $4, true)
+          -- Admins never go through signup/OTP, so they start verified.
+          ($1, $2, $3, 'admin', $4, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING id, name, email, role, created_at
       `,
       [name, email, hashedPassword, phone]

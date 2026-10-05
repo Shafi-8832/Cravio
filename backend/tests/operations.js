@@ -29,7 +29,7 @@ async function main() {
   if (!base || !/_(test|review)$/.test(new URL(process.env.DATABASE_URL).pathname)) throw new Error('Use the isolated test harness.')
   const adminPassword = crypto.randomBytes(18).toString('hex')
   const adminEmail = `ops-${Date.now()}@example.com`
-  await pool.query('INSERT INTO users(name,email,password,role) VALUES ($1,$2,$3,$4)',
+  await pool.query('INSERT INTO users(name,email,password,role,email_verified_at,phone_verified_at) VALUES ($1,$2,$3,$4,NOW(),NOW())',
     ['Operations test', adminEmail, await bcrypt.hash(adminPassword, 10), 'admin'])
   const admin = await login(adminEmail, adminPassword)
   const customer = await login('ayesha@example.com')

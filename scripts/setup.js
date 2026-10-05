@@ -8,8 +8,9 @@ if (fs.existsSync(backendEnv)) {
 } else {
   const template = fs.readFileSync(path.join(root, 'backend/.env.example'), 'utf8')
     .replace('replace-with-at-least-32-random-characters', crypto.randomBytes(48).toString('hex'))
+    .replace('replace-with-another-32-random-characters', crypto.randomBytes(48).toString('hex'))
   fs.writeFileSync(backendEnv, template, { mode: 0o600, flag: 'wx' })
-  console.log('Created backend/.env with a random JWT secret.')
+  console.log('Created backend/.env with random JWT and OTP secrets.')
 }
 const frontendEnv = path.join(root, 'frontend/.env')
 if (!fs.existsSync(frontendEnv)) {

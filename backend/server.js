@@ -16,6 +16,14 @@ if (!process.env.DATABASE_URL) {
   process.exit(1)
 }
 
+// Same fail-fast idea for the email/SMS providers and the OTP secret: a
+// signup that cannot deliver its codes should be caught at boot.
+const notifyProblems = require('./services/notify').assertNotifyConfig()
+if (notifyProblems.length) {
+  console.error('OTP delivery is misconfigured:\n  - ' + notifyProblems.join('\n  - '))
+  process.exit(1)
+}
+
 const pool = require('./db/pool')
 const path = require('path')
 const rateLimit = require('./middleware/rateLimit')
@@ -36,6 +44,13 @@ const app = express()
 const PORT = process.env.PORT || 8000
 
 app.disable('x-powered-by')
+// In production the app runs behind Render's load balancer, so every request
+// arrives from the proxy's address. Trusting exactly one proxy hop makes
+// req.ip the real visitor (the address Render appends to X-Forwarded-For),
+// which the login/OTP rate limiter keys on. Without this, all visitors
+// would share one limit. Locally there is no proxy, so it stays off and a
+// client cannot fake its IP with the header.
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1)
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173').split(',').map(value => value.trim())
 app.use(cors({ origin(origin, callback) {
   // Command-line clients have no Origin header. Browsers must match configuration.
@@ -48,9 +63,17 @@ app.use((req, res, next) => {
   next()
 })
 app.use('/media', express.static(path.join(__dirname, 'data/images'), { maxAge: '1d' }))
-const loginLimiter = rateLimit({ limit: 30 })
+// AUTH_RATE_LIMIT exists so the regression suite (many logins from one IP)
+// can raise the cap; normal runs keep the default of 30 per 15 minutes.
+const authRateLimit = Number(process.env.AUTH_RATE_LIMIT) || 30
+const loginLimiter = rateLimit({ limit: authRateLimit })
 app.use('/api/auth/login', loginLimiter)
 app.use('/api/auth/signup', loginLimiter)
+// Per-IP cap on top of the per-account limits in otpService.js (5 guesses
+// per code, 1 resend per minute, 5 per hour). Separate counter from login.
+const otpLimiter = rateLimit({ limit: authRateLimit })
+app.use('/api/auth/verify-otp', otpLimiter)
+app.use('/api/auth/resend-otp', otpLimiter)
 
 /* Routes
 if URL starts with '/api/auth', then leave the rest to 'authRoutes' function

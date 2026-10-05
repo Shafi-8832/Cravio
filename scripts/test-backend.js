@@ -28,7 +28,10 @@ async function main() {
   const port = process.env.TEST_PORT || '8011'
   const env = { ...process.env, DATABASE_URL: testUrl, JWT_SECRET: crypto.randomBytes(48).toString('hex'),
     PORT: port, NODE_ENV: 'test', ALLOW_DEMO_SEED: 'true', DEMO_PASSWORD: 'password123',
-    ALLOW_MANUAL_PAYMENTS: 'true', TEST_BASE_URL: `http://127.0.0.1:${port}` }
+    ALLOW_MANUAL_PAYMENTS: 'true', TEST_BASE_URL: `http://127.0.0.1:${port}`,
+    // OTP codes go to backend/.dev-outbox so the tests can read them.
+    EMAIL_PROVIDER: 'outbox', SMS_PROVIDER: 'outbox', OTP_HMAC_SECRET: crypto.randomBytes(48).toString('hex'),
+    AUTH_RATE_LIMIT: '200' }
   await run(path.join(root, 'backend/scripts/migrate.js'), env)
   await run(path.join(root, 'backend/scripts/seed.js'), { ...env, SEED_ACCOUNTS_ONLY: 'false' })
   await run(path.join(root, 'backend/scripts/seedBangladesh.js'), env)
@@ -48,7 +51,7 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 250))
     }
     if (!ready) throw new Error(`Test API failed to start. ${log}`)
-    for (const name of ['e2e.js', 'marketplace.js', 'operations.js', 'tracking.js']) {
+    for (const name of ['e2e.js', 'marketplace.js', 'operations.js', 'tracking.js', 'otp.js']) {
       const file = path.join(root, 'backend/tests', name)
       if (fs.existsSync(file)) await run(file, env)
     }

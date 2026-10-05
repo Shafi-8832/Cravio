@@ -49,8 +49,9 @@ async function ensureBrandOwners(client) {
     if (existing.rows.length > 0) continue
 
     await client.query(
-      `INSERT INTO users (name, email, password, role, phone, is_active)
-       VALUES ($1, $2, $3, 'restaurant_owner', $4, true)`,
+      // Seeded by the dev team, so treated as already verified.
+      `INSERT INTO users (name, email, password, role, phone, is_active, email_verified_at, phone_verified_at)
+       VALUES ($1, $2, $3, 'restaurant_owner', $4, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
       [owner.name, owner.email, hash, owner.phone]
     )
     created++

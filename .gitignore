@@ -12,3 +12,6 @@ deliverables/
 .prompt.txt
 
 .claude/
+
+# Development OTP outbox (codes written instead of sent)
+backend/.dev-outbox/

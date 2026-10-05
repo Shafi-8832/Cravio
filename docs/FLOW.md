@@ -2356,3 +2356,219 @@ END IF;
 Checked before the status check, because while the food is not ready the
 order is still `preparing`, and the generic transition error would hide the
 real reason from the rider.
+
+### Signup verification (email + phone OTP)
+
+**Files involved:**
+
+- `backend/db/migrations/013_account_verification.sql` — the `otp_verifications` table and the two `*_verified_at` columns on `users`
+- `backend/services/otpService.js` — every OTP rule: generate, hash, expire, count attempts, resend cooldown
+- `backend/services/notify/index.js` — picks the email and SMS provider from `.env`
+- `backend/services/notify/brevoEmail.js`, `backend/services/notify/smtpEmail.js`, `backend/services/notify/bulkSmsBd.js`, `backend/services/notify/devOutbox.js` — the providers
+- `backend/routes/auth.js` — signup (creates the unverified account), `/verify-otp`, `/resend-otp`, and the login gate
+- `backend/middleware/auth.js` — refuses an unverified account on every protected route
+- `backend/server.js` — checks the provider settings at startup; per-IP limit on the OTP routes
+- `backend/scripts/seed.js`, `seedAdmin.js`, `seedRealBangladesh.js` — seeded accounts are created already verified
+- `frontend/src/pages/VerifyAccountPage.jsx` — the two code boxes, Verify button and resend countdown
+- `frontend/src/components/AuthForm.jsx` — sends the visitor to `/verify` after signup, or after a login refused as unverified
+- `frontend/src/services/authApi.js`, `frontend/src/utils/api.js`, `frontend/src/App.jsx` — the API calls and the `/verify` route
+- `backend/tests/otp.js`, `backend/tests/otpHelpers.js` — regression tests
+
+---
+
+**Flow (exam-level explanation):**
+
+**The problem.** Before this feature, anyone could sign up with an email
+address or phone number that was not theirs, and start ordering at once.
+Now a new account must prove it owns both before it can do anything.
+
+**What an OTP is.** An OTP ("one-time password") is a short code, here 6
+digits, that we send to the email address or phone. Only the real owner
+receives it. Typing it back proves ownership.
+
+**Signing up, step by step.**
+
+1. The visitor fills in name, email, password and phone, and presses
+   Create account.
+2. The server checks the input. The phone must be a Bangladeshi mobile
+   number (`01` followed by 3–9 and eight more digits), because an SMS will
+   be sent to it. It is saved in one standard form, `01XXXXXXXXX`.
+3. The server opens a **transaction** (a group of SQL statements that
+   either all succeed or all get undone together). Inside it:
+   - it inserts the `users` row with `email_verified_at` and
+     `phone_verified_at` left empty (NULL means "not verified yet");
+   - it makes two random 6-digit codes, one for email and one for phone;
+   - it stores only a **hash** of each code in `otp_verifications`, with
+     an expiry time 5 minutes from now.
+4. The transaction is committed (made permanent).
+5. Only then are the codes sent: one by email, one by SMS. They are sent
+   after the commit because an email cannot be "unsent". If we sent it
+   first and the database then failed, the visitor would hold a code for an
+   account that does not exist.
+6. The server answers **201 Created**. It does **not** return a login
+   token any more, and it never returns the codes.
+7. The browser moves to the "Verify your email and phone" screen.
+
+**What "hash" means here.** A hash is a one-way scramble: from the code you
+can compute the hash, but from the hash you cannot get the code back. We use
+**HMAC-SHA256**, which is a hash mixed with a secret key kept in `.env`
+(`OTP_HMAC_SECRET`). The secret key matters because there are only one
+million 6-digit codes. Without a key, someone who stole the table could
+simply hash all million and see which one matches. Without the key, they
+cannot even start. (Passwords still use bcrypt, as before.)
+
+**Verifying, step by step.**
+
+1. The visitor types the two codes and presses Verify. The browser sends
+   the email and whichever codes were typed.
+2. The server opens a transaction and finds the user by email.
+3. For each code, it reads the live (`pending`) code row with
+   `SELECT ... FOR UPDATE`. `FOR UPDATE` **locks** that row until the
+   transaction ends, so two requests sent at the same moment cannot both
+   read "0 attempts used" and get extra guesses.
+4. If the code's time is up, the answer is "expired".
+5. Otherwise the attempt counter goes up by one, and the server hashes the
+   typed code and compares it with the stored hash.
+   - **Match:** the code row becomes `verified` and gets a `verified_at`
+     time, and the user's matching column (`email_verified_at` or
+     `phone_verified_at`) is set to now. Because the row is no longer
+     `pending`, the same code can never work again.
+   - **No match:** the visitor is told how many tries are left. On the 5th
+     wrong try the row becomes `locked`, and even the right code is refused
+     after that. Only a new code (resend) helps.
+6. The transaction is committed even when the code was wrong. Otherwise
+   the increased attempt counter would be undone, and the 5-try limit
+   would never be reached.
+7. Each channel is judged separately. If the email code was right and the
+   phone code wrong, the email stays verified and only the phone code needs
+   retyping. When both are verified, the screen shows "You're verified" and
+   a button to the login page.
+
+**Resending a code.**
+
+1. The visitor presses "Resend codes" (the button counts down 60 seconds
+   first).
+2. The server locks the user row so two quick clicks run one after the
+   other.
+3. It asks the database two questions with one query: how many seconds
+   since the last code, and how many codes in the last hour. Less than 60
+   seconds → **429 Too Many Requests** with the seconds left. Already 5 in
+   the last hour → **429** "try again in an hour".
+4. Otherwise the old pending code is marked `superseded` (replaced), a new
+   one is stored and sent.
+5. An email with no account, or one already verified, gets the same
+   friendly "if this account needs verification, a code was sent"
+   answer, so the endpoint cannot be used to find out who has an account.
+
+**Logging in.** Login works exactly as before: bcrypt password check, role
+read from the database, then the role-card check and suspension check. One
+new step comes after those: if either verified column is still NULL, the
+answer is **403 Forbidden** with `code: ACCOUNT_NOT_VERIFIED`, and the
+browser opens the verify screen. This check runs only after the password is
+proven, so a stranger cannot use it to learn which emails are unverified.
+
+**Protected routes.** The **middleware** (a function that runs before every
+protected route) already does one database query per request to check the
+token was not logged out and the account is not suspended. That same query
+now also reads the two verified columns. So even a token that somehow
+existed for an unverified account would be refused with 403. Logout and the
+`revoked_tokens` list are unchanged.
+
+**Email and SMS providers.** The OTP code never talks to a company directly.
+It calls `sendEmail()` and `sendSms()` in `services/notify/index.js`, which
+looks at `.env` to choose a provider: Brevo's HTTPS API or plain SMTP
+for email, and BulkSMSBD for SMS to Bangladeshi numbers. Production uses
+Brevo's HTTPS API because free hosting often blocks SMTP ports. For development
+there is an `outbox` provider that writes the message to a local file
+(and prints it in the backend terminal) instead of sending it; the server
+refuses to start with it in production.
+
+**Old and seeded accounts.** The migration marks every account that existed
+before it as verified, so nobody was locked out. The seed scripts and
+`npm run seed:admin` create accounts already verified, because the team
+creates them, not a visitor.
+
+**Key SQL:**
+
+```sql
+SELECT id, otp_hash, attempt_count,
+       expires_at <= CURRENT_TIMESTAMP AS is_expired
+FROM otp_verifications
+WHERE user_id = $1 AND channel = $2 AND status = 'pending'
+FOR UPDATE
+```
+Reads the one live code for this user and channel and locks it, and lets
+the database clock decide expiry so the app server's clock cannot disagree.
+
+```sql
+INSERT INTO otp_verifications (user_id, channel, otp_hash, expires_at)
+VALUES ($1, $2, $3, CURRENT_TIMESTAMP + make_interval(mins => $4))
+```
+Stores the hashed code with a 5-minute expiry; the partial unique index
+`uq_otp_one_pending_per_channel` (unique only `WHERE status = 'pending'`)
+guarantees there is never more than one live code per channel.
+
+```sql
+SELECT
+  EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MAX(created_at)))::int AS seconds_since_last,
+  COUNT(*) FILTER (WHERE created_at > CURRENT_TIMESTAMP - INTERVAL '1 hour')::int AS sent_last_hour
+FROM otp_verifications
+WHERE user_id = $1 AND channel = $2
+```
+One aggregate query answers both resend limits: `MAX` finds the newest
+code for the cooldown, and `COUNT ... FILTER` counts only the last hour's
+codes for the hourly cap.
+
+```sql
+UPDATE users SET email_verified_at = CURRENT_TIMESTAMP WHERE id = $1
+```
+Marks the email as proven. There is a second, identical query for the
+phone column; we pick one of two fixed queries because a column name cannot
+be passed as a `$1` parameter, and building SQL from strings is not allowed.
+
+### Production deployment (Vercel + Render + Neon)
+
+**Files involved:**
+
+- `frontend/vercel.json` — sends every page address to `index.html`
+- `frontend/vite.config.js` — stops a Vercel build that has no backend address
+- `frontend/src/utils/api.js` — the single `API_URL` and the request timeout
+- `frontend/src/components/FoodImage.jsx` — builds photo URLs from `API_URL`
+- `backend/server.js` — `trust proxy` in production, CORS from `CORS_ORIGIN`
+- `backend/services/notify/brevoEmail.js`, `backend/services/notify/index.js` — HTTPS email, and treating Render as production
+- `backend/package.json`, `frontend/package.json` — the Node version (`engines`)
+- `render.yaml` — the Render Blueprint: the backend service settings, kept in Git
+- `docs/DEPLOYMENT.md` — the exact dashboard settings
+
+---
+
+**Flow (exam-level explanation):**
+
+1. The visitor opens the Vercel address. Vercel only serves files: the
+   built HTML, JavaScript and CSS. It runs no Cravio code of its own.
+2. Cravio is a **single-page app** (one HTML page; React swaps the screens
+   in the browser). If the visitor refreshes on `/orders`, Vercel has no
+   file called `orders`, so `vercel.json` tells it to answer with
+   `index.html` and let React show the right screen.
+3. The JavaScript calls the backend at `API_URL`. That value comes from
+   `VITE_API_URL`, which Vite copies into the bundle when it is built. It is
+   only an address, never a secret. If it is missing on Vercel, the build
+   stops with an error, rather than shipping a site that calls
+   `localhost` on each visitor's own computer.
+4. The browser blocks a page from reading answers from a different domain
+   unless that domain agrees. This rule is **CORS** ("cross-origin resource
+   sharing"). The backend agrees only for the addresses listed in
+   `CORS_ORIGIN`, which is the Vercel address.
+5. Render runs `node server.js`. Render puts a **proxy** (a middleman
+   server) in front of it, so every request seems to come from the proxy.
+   `app.set('trust proxy', 1)` tells Express to read the visitor's real
+   address from the `X-Forwarded-For` header the proxy adds. The login
+   rate limiter counts attempts per address, so without this every visitor
+   would share one limit.
+6. Only the backend knows `DATABASE_URL`, and it connects to Neon over
+   encrypted TLS. The browser can never reach the database.
+7. A free Render server sleeps when idle and needs up to a minute to wake,
+   so the frontend waits 60 seconds before it gives up on a request.
+
+**Key SQL:** none new. Deployment changes configuration, not queries. Schema
+changes are still applied only by the additive migration runner, by hand.

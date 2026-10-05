@@ -44,6 +44,8 @@ Note: `backend/routes/roleCheck.js` is a stale duplicate of `backend/middleware/
 
 Login issues a JWT carrying a `jti`. `authenticateToken` verifies the signature and then runs **one** DB query joining `users` and `revoked_tokens`, so a revoked token (logout) and a suspended account (`users.is_active = false`) both take effect on the very next request rather than at next login. Logout inserts the `jti` into `revoked_tokens`.
 
+Signup creates an **unverified** account and sends an email OTP and an SMS OTP (`services/otpService.js`, providers behind `services/notify/`). No token is issued until both `users.email_verified_at` and `users.phone_verified_at` are set via `POST /api/auth/verify-otp`; login and `authenticateToken` both refuse unverified accounts. Any code that inserts `users` rows directly (seeds, tests) must set both columns. Codes are stored only as HMAC hashes in `otp_verifications`.
+
 Frontend counterpart is `frontend/src/utils/api.js`: a single axios instance whose request interceptor attaches the token from `localStorage`, and whose response interceptor clears storage and hard-redirects to `/login` on any 401 — except while already on `/login`, so a wrong-password error renders inline instead of reloading the page. `AuthContext` holds `user`/`login`/`logout`; `CartContext` holds cart state.
 
 ### Checkout lives in PostgreSQL

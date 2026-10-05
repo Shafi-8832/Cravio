@@ -153,6 +153,8 @@ Terminal 2, also at the project root:
 npm run dev:web
 ```
 
+**Signup verification codes.** New signups must enter an email code and an SMS code. In development, leave `EMAIL_PROVIDER=outbox` and `SMS_PROVIDER=outbox` in `backend/.env`: nothing is sent, and each code is written to `backend/.dev-outbox/outbox.jsonl` (gitignored) and also printed in the backend terminal as a `[dev outbox]` line. `OTP_HMAC_SECRET` must be set (32+ random characters; `npm run setup` generates it). For real delivery set `EMAIL_PROVIDER=brevo` with `BREVO_API_KEY` and `EMAIL_FROM` (or `EMAIL_PROVIDER=smtp` with the `SMTP_*` values), and `SMS_PROVIDER=bulksmsbd` with `BULKSMSBD_API_KEY` and `BULKSMSBD_SENDER_ID` (see `backend/.env.example`). The server refuses to start in production with the outbox provider. For deploying to Vercel + Render + Neon, see **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
 Open **http://localhost:5173**. API health is at **http://localhost:8000/api/health**. Keep the frontend URL in `CORS_ORIGIN`; if either port changes, update the corresponding `.env` and restart.
 
 Suggested walkthrough:

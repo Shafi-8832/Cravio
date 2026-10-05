@@ -24,7 +24,7 @@ const authenticateToken = async (req, res, next) => {
     const result = await pool.query(`
 
 
-      SELECT u.id, u.email, u.role, u.is_active, rt.id AS revoked_id
+      SELECT u.id, u.email, u.role, u.is_active, u.email_verified_at, u.phone_verified_at, rt.id AS revoked_id
       FROM users u LEFT JOIN revoked_tokens rt ON rt.jti=$1 WHERE u.id=$2
 
 
@@ -40,6 +40,12 @@ const authenticateToken = async (req, res, next) => {
     if (!user || user.revoked_id) return res.status(401).json({ error: 'Session ended. Please log in again.' })
 
     if (!user.is_active) return res.status(403).json({ error: 'Your account has been suspended. Contact support.' })
+
+    // Login already refuses unverified accounts, so this is defence in depth:
+    // no route behind this middleware can be reached by an unverified account.
+    if (user.email_verified_at === null || user.phone_verified_at === null) {
+      return res.status(403).json({ error: 'Please verify your email and phone number first.', code: 'ACCOUNT_NOT_VERIFIED' })
+    }
 
     req.user = { id: user.id, email: user.email, role: user.role, jti: decoded.jti, exp: decoded.exp }
     // the single most important line in this entire file. This is what allows the rest of the application to know who the user is and what their role is. Without this line, the user would be authenticated but the application would have no way of knowing who they are or what they can do.

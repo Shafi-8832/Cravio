@@ -39,15 +39,33 @@ export default function AuthForm({ role, signup = false }) {
       // what the account is.
       // Every login screen is scoped, the staff one included — otherwise a
       // customer's password would authenticate on the admin page.
-      const response = await (signup
-        ? signUp({ ...form, role: role.key })
-        : signIn({ email: form.email, password: form.password, expectedRole: role.key }))
+      if (signup) {
+        // Signup no longer logs in. The account is created unverified and
+        // the server sends one code by email and one by SMS; the next screen
+        // collects them. Nothing secret travels in the router state.
+        const response = await signUp({ ...form, role: role.key })
+        navigate('/verify', { state: {
+          email: response.data.email,
+          phoneMasked: response.data.phone_masked,
+          delivery: response.data.delivery,
+          resendIn: response.data.resend_available_in,
+          loginPath: `/login/${slug}`,
+        } })
+        return
+      }
+      const response = await signIn({ email: form.email, password: form.password, expectedRole: role.key })
       const signedInUser = response.data.user
       login(signedInUser, response.data.token)
       // Where we land follows the role the SERVER returned, not the card
       // that was clicked — if they ever disagree, the server wins.
       navigate(HOME_FOR_ROLE[signedInUser.role] || '/')
     } catch (err) {
+      // Right password, but the signup was never finished: send the visitor
+      // to the code screen instead of leaving them at a dead end.
+      if (err.response?.data?.code === 'ACCOUNT_NOT_VERIFIED') {
+        navigate('/verify', { state: { email: err.response.data.email, loginPath: `/login/${slug}`, unfinished: true } })
+        return
+      }
       setError(errorMessage(err))
     } finally {
       setBusy(false)

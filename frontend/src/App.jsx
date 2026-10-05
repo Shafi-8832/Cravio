@@ -6,6 +6,7 @@ import Navbar from './components/Navbar'
 import Footer from './components/Footer'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
+import VerifyAccountPage from './pages/VerifyAccountPage'
 import HomePage from './pages/HomePage'
 import DirectoryPage from './pages/DirectoryPage'
 import RestaurantPage from './pages/RestaurantPage'
@@ -47,6 +48,8 @@ function AppRoutes() {
     <Route path="/admin/login" element={<PublicOnly><LoginPage staff /></PublicOnly>} />
     <Route path="/signup" element={<PublicOnly><SignupPage /></PublicOnly>} />
     <Route path="/signup/:role" element={<PublicOnly><SignupPage /></PublicOnly>} />
+    {/* Step two of signup: the email + phone codes. Public, because the account has no token until it is verified. */}
+    <Route path="/verify" element={<PublicOnly><VerifyAccountPage /></PublicOnly>} />
     <Route path="/account" element={<RoleRoute><AccountPage /></RoleRoute>} />
     {/* One profile route for every role; the page itself branches on the role the server returns. */}
     <Route path="/profile" element={<RoleRoute><AccountPage /></RoleRoute>} />

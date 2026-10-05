@@ -23,7 +23,7 @@ async function main() {
   if (!base || !/_(test|review)$/.test(new URL(process.env.DATABASE_URL).pathname)) throw new Error('Use npm run test:backend with a separate database.')
   const nonce = Date.now()
   const adminPassword = crypto.randomBytes(18).toString('hex')
-  await pool.query('INSERT INTO users(name,email,password,role) VALUES ($1,$2,$3,$4)',
+  await pool.query('INSERT INTO users(name,email,password,role,email_verified_at,phone_verified_at) VALUES ($1,$2,$3,$4,NOW(),NOW())',
     ['Tracking admin', `track-admin-${nonce}@example.com`, await bcrypt.hash(adminPassword, 10), 'admin'])
   const admin = await login(`track-admin-${nonce}@example.com`, adminPassword)
   const customer = await login('ayesha@example.com')

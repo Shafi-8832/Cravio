@@ -3,6 +3,7 @@ require('dotenv').config({ quiet: true })
 const assert = require('node:assert/strict')
 const jwt = require('jsonwebtoken')
 const pool = require('../db/pool')
+const { latestCode, uniquePhone } = require('./otpHelpers')
 const base = process.env.TEST_BASE_URL
 let passed = 0
 function check(name, actual, expected) { assert.deepEqual(actual, expected, name); passed++; console.log('PASS ' + name) }
@@ -15,10 +16,16 @@ async function call(method, route, token, body) {
 async function main() {
   if (!base || !/_(test|review)$/.test(new URL(process.env.DATABASE_URL).pathname)) throw new Error('Use npm run test:backend with a separate database.')
   const nonce = Date.now()
-  const customerResult = await call('POST', '/auth/signup', null, { name: 'Marketplace test', email: 'market-' + nonce + '@example.com', password: 'testPassword123', role: 'customer', phone: '01700000123' })
+  // Signup now issues no token: the account is verified by OTP, then logs in.
+  const customerEmail = 'market-' + nonce + '@example.com'
+  const customerPhone = uniquePhone()
+  const customerResult = await call('POST', '/auth/signup', null, { name: 'Marketplace test', email: customerEmail, password: 'testPassword123', role: 'customer', phone: customerPhone })
   check('customer signup', customerResult.status, 201)
-  const customer = customerResult.body.token
-  const customerId = customerResult.body.user.id
+  const verified = await call('POST', '/auth/verify-otp', null, { email: customerEmail, email_otp: latestCode('email', customerEmail), phone_otp: latestCode('phone', customerPhone) })
+  check('customer verified by OTP', verified.body.account_verified, true)
+  const customerLogin = await call('POST', '/auth/login', null, { email: customerEmail, password: 'testPassword123' })
+  const customer = customerLogin.body.token
+  const customerId = customerLogin.body.user.id
   const login = async email => {
     const response = await call('POST', '/auth/login', null, { email, password: 'password123' })
     assert.ok(response.body.token, JSON.stringify(response.body)); return response.body.token

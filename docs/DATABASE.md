@@ -7,7 +7,7 @@ Schema files:
 
 - `backend/db/schema.sql` — the base schema (22 tables). It contains a
   destructive reset and is used **only** to bootstrap an empty database.
-- `backend/db/migrations/001..012_*.sql` — additive, checksummed migrations.
+- `backend/db/migrations/001..013_*.sql` — additive, checksummed migrations.
 - `backend/db/functions/*.sql` — the triggers, functions and the procedure.
   Re-installed on every migration run with `CREATE OR REPLACE`.
 
@@ -22,12 +22,19 @@ Schema files:
 
 - `users` — one row per account. `role` is `customer`, `restaurant_owner`,
   `rider` or `admin`, constrained by a `CHECK`. `password_hash` holds a bcrypt
-  hash. `is_active` is the suspension switch.
+  hash. `is_active` is the suspension switch. `email_verified_at` /
+  `phone_verified_at` record when signup OTP verification proved each
+  contact (NULL = not yet); login and the auth middleware require both.
 - `rider_profiles` — one row per rider user (`user_id → users`): availability
   and vehicle details.
 - `customer_addresses` — saved delivery addresses (`user_id → users`).
 - `revoked_tokens` — one row per logged-out JWT (`jti`, `user_id`,
   `expires_at`). This is what makes logout real.
+- `otp_verifications` — one row per OTP sent (`user_id → users`, `channel`
+  email/phone, `otp_hash` = HMAC-SHA256 of the code, never the code,
+  `expires_at`, `status` pending/verified/superseded/locked,
+  `attempt_count`, `verified_at`). A partial unique index allows only one
+  `pending` code per user + channel (migration 013).
 
 **Catalogue**
 

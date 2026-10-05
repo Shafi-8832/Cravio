@@ -325,9 +325,10 @@ const ensureUser = async (client, user, hashedPassword) => {
   const inserted = await client.query(
     `
       INSERT INTO users
-        (name, email, password, role, phone, is_active)
+        (name, email, password, role, phone, is_active, email_verified_at, phone_verified_at)
       VALUES
-        ($1, $2, $3, $4, $5, true)
+        -- Seeded by the dev team, so treated as already verified.
+        ($1, $2, $3, $4, $5, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING id
     `,
     [user.name, user.email, hashedPassword, user.role, user.phone]

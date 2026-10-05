@@ -10,6 +10,7 @@ const crypto = require('crypto')
 
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
+const otpService = require('../services/otpService')
 
 const router = express.Router()
 
@@ -46,6 +47,22 @@ const ROLE_LABELS = {
 }
 
 
+// Bangladeshi mobile numbers: 01 + operator digit 3-9 + 8 digits, optionally
+// written with the +880 / 880 country code. The phone receives an SMS code,
+// so it has to be a number a Bangladeshi gateway can actually reach.
+const BD_MOBILE_REGEX = /^(?:\+?880|0)(1[3-9]\d{8})$/
+
+// Returns the number in one stored form (01XXXXXXXXX) or null if invalid.
+// Spaces and dashes are removed first so "017-1234 5678" is accepted.
+function normalizeBdPhone(phone) {
+  const match = BD_MOBILE_REGEX.exec(String(phone).replace(/[\s-]/g, ''))
+  return match ? '0' + match[1] : null
+}
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const OTP_REGEX = /^\d{6}$/
+
+
 
 // ============================================================
 // SIGNUP
@@ -66,17 +83,24 @@ router.post('/signup', async (req, res) => {
 
   const trimmedName = String(name).trim()
   const trimmedEmail = String(email).trim().toLowerCase()
-  const trimmedPhone = String(phone).trim()
+  const trimmedPhone = normalizeBdPhone(phone)
 
-                                                                                                // what is this regex doing? /^[0-9+\-\s()]{7,20}$/  --> matches a string that contains only digits, +, -, whitespace, and parentheses, and is between 7 and 20 characters long
-  if (!trimmedName || trimmedName.length > 100 || !trimmedEmail || trimmedEmail.length > 100 || !/^[0-9+\-\s()]{7,20}$/.test(trimmedPhone)) {
+
+  if (!trimmedName || trimmedName.length > 100 || !trimmedEmail || trimmedEmail.length > 100) {
     return res.status(400).json({
       error: 'All fields are required.'
     })
   }
 
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/ 
+  if (!trimmedPhone) {
+    return res.status(400).json({
+      error: 'Please enter a valid Bangladeshi mobile number (e.g. 01712345678).'
+    })
+  }
+
+
+  const emailRegex = EMAIL_REGEX
   // what is this regex doing? /^[^\s@]+@[^\s@]+\.[^\s@]+$/  --> 
   // matches a string that contains one or more characters 
   // that are not whitespace or @, followed by an @, 
@@ -176,7 +200,8 @@ router.post('/signup', async (req, res) => {
       id,
       name,
       email,
-      role
+      role,
+      phone
       `,
 
       [
@@ -220,39 +245,31 @@ router.post('/signup', async (req, res) => {
     }
 
 
-    await client.query('COMMIT')
-
-
-    if (!process.env.JWT_SECRET) {
-      throw new Error("JWT_SECRET missing")
+    // The account starts unverified (email_verified_at / phone_verified_at
+    // are NULL). One code per channel is created in this same transaction,
+    // so a user row never exists without the codes that can verify it.
+    const codes = {
+      email: await otpService.createOtp(client, user.id, 'email'),
+      phone: await otpService.createOtp(client, user.id, 'phone')
     }
 
 
-    const jti = crypto.randomBytes(16).toString('hex')
-    // 16 means 16 bytes, which is 128 bits. This is a common size for unique identifiers and provides a very low probability of collision.
+    await client.query('COMMIT')
 
-    const token = jwt.sign(
 
-      {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        jti
-      },
-
-      process.env.JWT_SECRET,
-
-      {
-        expiresIn: '7d'
-      }
-
-    )
+    // Sent only after COMMIT — see deliverOtps. No JWT is issued here any
+    // more: a token is handed out by /login, once both codes are verified.
+    const delivery = await otpService.deliverOtps(user, codes)
 
 
     res.status(201).json({
 
-      token,
-      user
+      message: 'Account created. Enter the codes sent to your email and phone to activate it.',
+      email: user.email,
+      phone_masked: otpService.maskPhone(user.phone),
+      delivery,
+      expires_in_minutes: otpService.OTP_TTL_MINUTES,
+      resend_available_in: otpService.RESEND_COOLDOWN_SECONDS
 
     })
 
@@ -435,6 +452,25 @@ router.post('/login', async (req, res) => {
 
 
 
+    // Checked only AFTER the password matched, for the same reason as the
+    // role check above: a stranger must not learn which emails are pending.
+    // The response carries a code (not just text) so the frontend can send
+    // the visitor to the verification screen instead of showing a dead end.
+    if (user.email_verified_at === null || user.phone_verified_at === null) {
+
+      return res.status(403).json({
+
+        error: "Please verify your email and phone number before logging in.",
+        code: 'ACCOUNT_NOT_VERIFIED',
+        email: user.email
+
+      })
+
+    }
+
+
+
+
     if (!process.env.JWT_SECRET) {
 
       throw new Error(
@@ -512,6 +548,163 @@ router.post('/login', async (req, res) => {
   }
 
 
+
+})
+
+
+
+
+
+// ============================================================
+// VERIFY OTP
+// POST /api/auth/verify-otp
+// Body: { email, email_otp?, phone_otp? } — at least one code.
+//
+// Each channel is checked on its own, so a visitor who typed the email
+// code right and the phone code wrong keeps the email success and only
+// retries the phone code. The account becomes usable once both are done.
+// ============================================================
+
+// The message for each failed status, worst first: if several channels
+// failed, the response describes the most serious problem.
+const OTP_FAILURES = [
+  { status: 'locked', http: 429, code: 'OTP_TOO_MANY_ATTEMPTS', error: 'Too many incorrect attempts. Request a new code.' },
+  { status: 'expired', http: 400, code: 'OTP_EXPIRED', error: 'This code has expired or was already used. Request a new code.' },
+  { status: 'invalid', http: 400, code: 'OTP_INVALID', error: 'The code is incorrect.' }
+]
+
+router.post('/verify-otp', async (req, res) => {
+
+  const { email, email_otp: emailOtp, phone_otp: phoneOtp } = req.body
+
+  if (typeof email !== 'string' || !EMAIL_REGEX.test(email.trim()) || email.length > 100) {
+    return res.status(400).json({ error: 'A valid email address is required.' })
+  }
+
+  // Each code is optional, but whatever is sent must be exactly 6 digits.
+  const codes = {}
+  if (emailOtp !== undefined && emailOtp !== '') codes.email = emailOtp
+  if (phoneOtp !== undefined && phoneOtp !== '') codes.phone = phoneOtp
+
+  if (Object.keys(codes).length === 0) {
+    return res.status(400).json({ error: 'Enter the email code, the phone code, or both.' })
+  }
+
+  if (!Object.values(codes).every(code => typeof code === 'string' && OTP_REGEX.test(code))) {
+    return res.status(400).json({ error: 'Codes are 6 digits.', code: 'OTP_INVALID' })
+  }
+
+  try {
+
+    const outcome = await otpService.verifyAccount(email.trim().toLowerCase(), codes)
+
+    // Unknown email: same answer as a wrong code, so this endpoint cannot
+    // be used to discover which addresses have accounts.
+    if (!outcome) {
+      return res.status(400).json({ error: 'The code is incorrect.', code: 'OTP_INVALID' })
+    }
+
+    // What the UI needs in every case, success or failure.
+    const body = {
+      email_verified: outcome.emailVerified,
+      phone_verified: outcome.phoneVerified,
+      account_verified: outcome.emailVerified && outcome.phoneVerified,
+      results: outcome.results
+    }
+
+    const failure = OTP_FAILURES.find(item =>
+      Object.values(outcome.results).some(result => result.status === item.status))
+
+    if (failure) {
+      return res.status(failure.http).json({ ...body, error: failure.error, code: failure.code })
+    }
+
+    res.json({
+      ...body,
+      message: body.account_verified
+        ? 'Email and phone verified. You can now log in.'
+        : 'Code accepted. Enter the remaining code to finish.'
+    })
+
+  }
+
+  catch (error) {
+
+    // Log the failure, never the request body — it contains the codes.
+    console.error('VERIFY OTP ERROR:', error.message)
+
+    res.status(500).json({ error: 'Server error while verifying the code.' })
+
+  }
+
+})
+
+
+
+
+
+// ============================================================
+// RESEND OTP
+// POST /api/auth/resend-otp
+// Body: { email, channel: 'email' | 'phone' | 'both' }
+// ============================================================
+
+const RESEND_CHANNELS = {
+  email: ['email'],
+  phone: ['phone'],
+  both: ['email', 'phone']
+}
+
+router.post('/resend-otp', async (req, res) => {
+
+  const { email, channel = 'both' } = req.body
+
+  if (typeof email !== 'string' || !EMAIL_REGEX.test(email.trim()) || email.length > 100) {
+    return res.status(400).json({ error: 'A valid email address is required.' })
+  }
+
+  if (!Object.hasOwn(RESEND_CHANNELS, channel)) {
+    return res.status(400).json({ error: "channel must be 'email', 'phone' or 'both'." })
+  }
+
+  try {
+
+    const result = await otpService.resendOtps(email.trim().toLowerCase(), RESEND_CHANNELS[channel])
+
+    if (result.outcome === 'cooldown') {
+      res.set('Retry-After', String(result.retryAfter))
+      return res.status(429).json({
+        error: `Please wait ${result.retryAfter} seconds before requesting another code.`,
+        code: 'OTP_RESEND_COOLDOWN',
+        retry_after: result.retryAfter
+      })
+    }
+
+    if (result.outcome === 'limit') {
+      return res.status(429).json({
+        error: 'Too many codes requested. Please try again in an hour.',
+        code: 'OTP_RESEND_LIMIT'
+      })
+    }
+
+    // 'nothing_to_send' (unknown or already-verified email) gets the same
+    // generic success as a real send, so it reveals nothing.
+    res.json({
+      message: 'If this account still needs verification, a new code has been sent.',
+      delivery: result.delivery || {},
+      phone_masked: result.phoneMasked || null,
+      resend_available_in: otpService.RESEND_COOLDOWN_SECONDS
+    })
+
+  }
+
+  catch (error) {
+
+    console.error('RESEND OTP ERROR:', error.message)
+
+    res.status(500).json({ error: 'Server error while sending a new code.' })
+
+  }
 
 })
 
