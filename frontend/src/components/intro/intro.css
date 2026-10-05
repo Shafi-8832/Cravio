@@ -1,0 +1,292 @@
+/* ============================================================
+   Cravio intro ("The Reveal"). Used only by IntroOverlay.jsx.
+   Every delay/duration comes from INTRO_TIMING in IntroOverlay.jsx
+   through CSS variables such as var(--lidLift-start).
+   Only transform and opacity are animated (plus stroke-dashoffset to
+   draw the steam), so the browser can keep it smooth.
+   ============================================================ */
+
+.intro-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: #FFF4E0;
+}
+/* While the circle opens, clicks go through to the page being revealed. */
+.intro-overlay.is-exiting { pointer-events: none; }
+
+/* ---------- background + circular reveal ---------- */
+.intro-backdrop { position: absolute; inset: 0; width: 100%; height: 100%; }
+.intro-hole, .intro-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(0);
+}
+.intro-ring { opacity: 0; }
+.is-exiting .intro-hole { animation: intro-hole-open var(--exit-duration) cubic-bezier(.55, 0, .35, 1) forwards; }
+.is-exiting .intro-ring { animation: intro-ring-open var(--exit-duration) cubic-bezier(.55, 0, .35, 1) forwards; }
+
+@keyframes intro-hole-open { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes intro-ring-open {
+  0% { transform: scale(0); opacity: 1; }
+  75% { opacity: .9; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* ---------- 1. floating specks ---------- */
+.intro-specks { position: absolute; inset: 0; pointer-events: none; }
+.intro-speck {
+  position: absolute;
+  bottom: -8px;
+  border-radius: 50%;
+  background: #F59E0B;
+  opacity: 0;
+  animation-name: intro-speck;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+@keyframes intro-speck {
+  0% { opacity: 0; transform: translateY(0); }
+  20% { opacity: .4; }
+  80% { opacity: .3; }
+  100% { opacity: 0; transform: translateY(-60vh); }
+}
+
+/* ---------- the scene: stage (cloche + logo) and tagline ---------- */
+.intro-scene {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(10px, 3vh, 28px);
+}
+/* The stage scales with the screen: the narrowest of 86% of the width,
+   56% of the height or 480px, so the cloche and logo are never cropped. */
+.intro-stage {
+  position: relative;
+  width: min(86vw, 56vh, 480px);
+  aspect-ratio: 400 / 360;
+}
+
+/* The warm glow. Percent margins are measured from the stage WIDTH, which
+   centres a square glow without using transform (transform is animated). */
+.intro-glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 135%;
+  aspect-ratio: 1;
+  margin-left: -67.5%;
+  margin-top: -67.5%;
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side,
+    rgba(255, 244, 224, .95) 0%,
+    rgba(255, 244, 224, .8) 30%,
+    rgba(245, 158, 11, .55) 52%,
+    rgba(194, 65, 12, .25) 72%,
+    rgba(194, 65, 12, 0) 100%);
+  opacity: 0;
+  /* glow-rise owns the start; glow-bloom only takes over once it begins
+     (fill "forwards", not "both", so it does not override the rise early). */
+  animation:
+    intro-glow-rise var(--glowRise-duration) cubic-bezier(.2, .7, .3, 1) var(--glowRise-start) both,
+    intro-glow-bloom var(--lidLift-duration) ease-out var(--lidLift-start) forwards;
+}
+@keyframes intro-glow-rise {
+  from { opacity: 0; transform: translateY(70%) scale(.55); }
+  to { opacity: .45; transform: translateY(0) scale(.8); }
+}
+@keyframes intro-glow-bloom {
+  0% { opacity: .45; transform: translateY(0) scale(.8); }
+  40% { opacity: 1; transform: translateY(0) scale(1.08); }
+  100% { opacity: .95; transform: translateY(0) scale(1); }
+}
+
+/* ---------- 2. cloche arrives with speed streaks ---------- */
+.intro-cloche-travel, .intro-cloche-swap { position: absolute; inset: 0; }
+.intro-cloche-travel {
+  animation: intro-cloche-arrive var(--clocheArrive-duration) cubic-bezier(.2, .7, .3, 1) var(--clocheArrive-start) both;
+}
+/* Overshoot to the right, settle back: the small bounce. */
+@keyframes intro-cloche-arrive {
+  0% { transform: translateX(-120vw); }
+  70% { transform: translateX(5%); }
+  86% { transform: translateX(-2%); }
+  100% { transform: translateX(0); }
+}
+.intro-cloche-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+.intro-streaks { position: absolute; inset: 0; }
+.intro-streaks span {
+  position: absolute;
+  right: 88%;
+  height: 3.2%;
+  border-radius: 999px;
+  background: linear-gradient(to left, #F59E0B, #C2410C 55%, rgba(194, 65, 12, 0));
+  transform-origin: right center;
+  /* The trail shrinks into the cloche once it has (almost) stopped. */
+  animation: intro-streak-out 450ms ease-in calc(var(--clocheArrive-start) + var(--clocheArrive-duration) * .7) forwards;
+}
+@keyframes intro-streak-out { to { opacity: 0; transform: scaleX(0); } }
+
+/* ---------- 3. lid lifts, light bursts, steam is drawn ---------- */
+/* transform-box: view-box lets the origin be given in SVG units:
+   the lid hinges on the right end of its rim (352, 252). */
+.intro-lid {
+  transform-box: view-box;
+  transform-origin: 352px 252px;
+  animation: intro-lid-lift var(--lidLift-duration) cubic-bezier(.34, 1.3, .64, 1) var(--lidLift-start) both;
+}
+@keyframes intro-lid-lift {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(0, 4px) rotate(-2deg); }
+  100% { transform: translate(40px, -60px) rotate(18deg); }
+}
+
+.intro-burst {
+  transform-box: view-box;
+  transform-origin: 180px 250px;
+  opacity: 0;
+  animation: intro-burst var(--lidLift-duration) ease-out var(--lidLift-start) both;
+}
+@keyframes intro-burst {
+  0% { opacity: 0; transform: scale(.6, .2); }
+  45% { opacity: 1; transform: scale(1.1, 1.1); }
+  100% { opacity: .75; transform: scale(1, 1); }
+}
+
+/* Each curl starts a little after the previous one. */
+.intro-steam path { --steam-offset: 0ms; }
+.intro-steam path:nth-child(2) { --steam-offset: 120ms; }
+.intro-steam path:nth-child(3) { --steam-offset: 240ms; }
+.intro-steam path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+  /* draw first ("both"), drift takes over later ("forwards" only). */
+  animation:
+    intro-steam-draw var(--steamDraw-duration) ease-out calc(var(--steamDraw-start) + var(--steam-offset)) both,
+    intro-steam-drift var(--steamDrift-duration) ease-in calc(var(--steamDrift-start) + var(--steam-offset)) forwards;
+}
+@keyframes intro-steam-draw {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  15% { opacity: .9; }
+  100% { stroke-dashoffset: 0; opacity: .9; }
+}
+@keyframes intro-steam-drift {
+  from { opacity: .9; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-40px); }
+}
+
+/* ---------- 4. drawn cloche becomes the real logo, tagline ---------- */
+.intro-cloche-swap {
+  animation: intro-cloche-out var(--logoSwap-duration) ease-in var(--logoSwap-start) forwards;
+}
+@keyframes intro-cloche-out { to { opacity: 0; transform: scale(.82); } }
+
+/* 573 x 503 is the logo file's own size; the negative top margin (percent
+   of the stage width) centres it vertically. */
+.intro-logo {
+  position: absolute;
+  left: 11%;
+  top: 50%;
+  width: 78%;
+  height: auto;
+  margin-top: calc(-78% * 503 / 573 / 2);
+  opacity: 0;
+  animation: intro-logo-in var(--logoSwap-duration) cubic-bezier(.2, .8, .2, 1) var(--logoSwap-start) both;
+}
+@keyframes intro-logo-in {
+  from { opacity: 0; transform: scale(1.12); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.intro-tagline {
+  margin: 0;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  font-size: clamp(1.1rem, 2.6vw, 1.6rem);
+  letter-spacing: -.02em;
+  color: #F8C77A;
+  display: flex;
+  gap: .35em;
+}
+.intro-word {
+  display: inline-block;
+  opacity: 0;
+  animation-name: intro-word-in;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;
+}
+@keyframes intro-word-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- 5. exit: everything inside the circle fades as it opens ---------- */
+.is-exiting .intro-scene,
+.is-exiting .intro-specks { animation: intro-scene-out 350ms ease-in forwards; }
+@keyframes intro-scene-out { to { opacity: 0; transform: scale(1.06); } }
+
+/* ---------- progress bar + skip button ---------- */
+.intro-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: #F59E0B;
+  transform-origin: left center;
+  animation: intro-progress var(--intro-total) linear both;
+}
+@keyframes intro-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+.intro-skip {
+  position: absolute;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 244, 224, .4);
+  background: rgba(28, 15, 10, .55);
+  color: #FFF4E0;
+  font-size: .85rem;
+  font-weight: 600;
+  transition: background-color .2s, opacity .2s;
+}
+.intro-skip:hover { background: rgba(255, 244, 224, .12); }
+.is-exiting .intro-skip { opacity: 0; }
+
+/* ---------- reduced motion: 1-second logo fade only ---------- */
+.intro-overlay.is-reduced {
+  background: radial-gradient(circle at 50% 55%, #2B1410, #1C0F0A 75%);
+  animation: intro-reduced-out var(--reducedMotion-duration) linear forwards;
+}
+.intro-reduced-stage { position: relative; width: min(70vw, 44vh, 380px); }
+.intro-reduced-glow {
+  position: absolute;
+  inset: -25%;
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side, rgba(255, 244, 224, .95) 35%, rgba(245, 158, 11, .4) 65%, rgba(194, 65, 12, 0) 100%);
+}
+.intro-reduced-logo {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  animation: intro-reduced-logo var(--reducedMotion-duration) linear both;
+}
+@keyframes intro-reduced-out { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes intro-reduced-logo { 0% { opacity: 0; } 35%, 100% { opacity: 1; } }
+
+/* index.css switches every animation off for reduced motion. These two
+   plain opacity fades are the agreed exception (no movement at all), so
+   they are re-enabled here with a more specific selector. */
+@media (prefers-reduced-motion: reduce) {
+  .intro-overlay.is-reduced { animation: intro-reduced-out var(--reducedMotion-duration) linear forwards !important; }
+  .intro-overlay .intro-reduced-logo { animation: intro-reduced-logo var(--reducedMotion-duration) linear both !important; }
+}

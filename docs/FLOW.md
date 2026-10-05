@@ -2584,3 +2584,53 @@ be passed as a `$1` parameter, and building SQL from strings is not allowed.
 
 **Key SQL:** none new. Deployment changes configuration, not queries. Schema
 changes are still applied only by the additive migration runner, by hand.
+
+### Intro animation ("The Reveal")
+**Files involved:**
+- `frontend/src/components/intro/IntroOverlay.jsx` — when to play, the timeline constants, skip, scroll lock
+- `frontend/src/components/intro/ClocheArt.jsx` — the drawn cloche (inline SVG)
+- `frontend/src/components/intro/intro.css` — every keyframe animation
+- `frontend/src/App.jsx` — renders `<IntroOverlay />` next to the router
+- `frontend/src/assets/brand/cravio-logo.png` — the real logo the scene ends on
+
+**Flow (exam-level explanation):**
+An *overlay* is a layer drawn on top of the whole page. A *CSS keyframe
+animation* is a list of "at this moment, look like this" steps that the browser
+plays by itself. *sessionStorage* is a small store in the browser that belongs to
+one tab and is wiped when that tab is closed.
+
+1. **The app loads as normal.** `App.jsx` renders the router (the real page)
+   and, beside it, `IntroOverlay`. Because they are side by side, the page
+   mounts and starts its API requests at the same moment; the intro never
+   delays them.
+2. **Should the intro play?** `IntroOverlay` decides once, on first load. It
+   plays only if the tab opened on the landing page `/` (a deep link such as
+   `/restaurants/12` or `/login` skips it), the key `cravio:intro-played` is not
+   in sessionStorage, and the tab is visible. Storage access is wrapped in
+   try/catch, so blocked storage only means "nothing is remembered".
+3. **Which version?** If the system setting "reduce motion" is on, it shows only
+   the logo fading in and out within 1 second. Otherwise it plays the full scene.
+4. **While it shows**, the key is written to sessionStorage (so a reload in the
+   same tab does not replay it) and page scrolling is locked by setting
+   `overflow: hidden` on `<html>` and `<body>`. The old values are put back after.
+5. **The timeline.** All times live in one object, `INTRO_TIMING`, at the top of
+   `IntroOverlay.jsx`. They are passed to the CSS as variables such as
+   `--lidLift-start`, and each animation uses them as its delay and duration:
+   glow and specks (0–0.6 s), the cloche sliding in with speed streaks and a
+   small bounce (0.6–1.6 s), the lid lifting with a light burst and the steam
+   drawn stroke by stroke (1.6–2.4 s), the cloche crossfading into the real
+   logo and the tagline appearing word by word (2.4–3.6 s).
+6. **The exit (3.6–4.5 s).** React switches the overlay to its "exiting" state.
+   The dark background is an SVG with a *mask*: a shape that decides which parts
+   are visible. A black circle in the mask is a hole; growing that circle opens
+   the overlay from the centre outwards and reveals the page. Then the overlay is
+   removed from the page.
+7. **Skipping.** The "Skip intro" button and the Esc key jump straight to the
+   exit. Switching to another tab ends the intro at once, because browsers slow
+   down timers in hidden tabs.
+8. Only `transform` and `opacity` are animated (plus `stroke-dashoffset` for the
+   steam), which the browser can animate smoothly without re-laying out the page.
+
+**Key SQL:** none. This feature is frontend only and sends no requests.
+To replay it while testing, run `sessionStorage.removeItem('cravio:intro-played')`
+in the browser console and reload `/`.

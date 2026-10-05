@@ -4,6 +4,7 @@ import { CartProvider } from './context/CartContext'
 import { LocationProvider } from './context/LocationContext'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
+import IntroOverlay from './components/intro/IntroOverlay'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
 import VerifyAccountPage from './pages/VerifyAccountPage'
@@ -66,5 +67,10 @@ function AppRoutes() {
   </Routes><Footer /></>
 }
 export default function App() {
-  return <BrowserRouter><AuthProvider><LocationProvider><CartProvider><AppRoutes /></CartProvider></LocationProvider></AuthProvider></BrowserRouter>
+  // IntroOverlay sits beside the app, not around it: the page underneath
+  // mounts and loads its data while the intro plays on top.
+  return <>
+    <BrowserRouter><AuthProvider><LocationProvider><CartProvider><AppRoutes /></CartProvider></LocationProvider></AuthProvider></BrowserRouter>
+    <IntroOverlay />
+  </>
 }
