@@ -26,6 +26,12 @@ export default function VerifyAccountPage() {
   const [email, setEmail] = useState(state?.email || '')
   const [codes, setCodes] = useState({ email: '', phone: '' })
   const [verified, setVerified] = useState({ email: false, phone: false })
+  // Which codes this deployment requires. The server sends the list with
+  // signup and with an "unverified" login refusal; phone can be switched
+  // off on the server (PHONE_OTP_REQUIRED=false). Default: both.
+  const [channels, setChannels] = useState(state?.channels || ['email', 'phone'])
+  // The server's own verdict, so the page never decides "verified" itself.
+  const [accountVerified, setAccountVerified] = useState(false)
   const [channelErrors, setChannelErrors] = useState({})
   // If a send failed during signup, say so straight away.
   const [error, setError] = useState(deliveryProblem(state?.delivery))
@@ -37,7 +43,8 @@ export default function VerifyAccountPage() {
   // cooldown; this countdown only stops the visitor clicking into a 429.
   const [cooldown, setCooldown] = useState(state?.resendIn || 0)
   const loginPath = state?.loginPath || '/login'
-  const done = verified.email && verified.phone
+  const done = accountVerified
+  const needsPhone = channels.includes('phone')
 
   useEffect(() => {
     if (cooldown <= 0) return undefined
@@ -54,7 +61,7 @@ export default function VerifyAccountPage() {
     // Only send codes for channels that still need verifying.
     const payload = { email }
     if (!verified.email && codes.email) payload.email_otp = codes.email
-    if (!verified.phone && codes.phone) payload.phone_otp = codes.phone
+    if (needsPhone && !verified.phone && codes.phone) payload.phone_otp = codes.phone
     try {
       const response = await verifyOtp(payload)
       applyResult(response.data)
@@ -70,6 +77,8 @@ export default function VerifyAccountPage() {
 
   function applyResult(data) {
     setVerified({ email: data.email_verified, phone: data.phone_verified })
+    if (data.channels) setChannels(data.channels)
+    setAccountVerified(Boolean(data.account_verified))
     const errors = {}
     const successes = []
     for (const [channel, result] of Object.entries(data.results || {})) {
@@ -90,7 +99,7 @@ export default function VerifyAccountPage() {
     setNotice('')
     setChannelErrors({})
     // Ask only for the codes still missing.
-    const channel = verified.email ? 'phone' : verified.phone ? 'email' : 'both'
+    const channel = !needsPhone || verified.phone ? 'email' : verified.email ? 'phone' : 'both'
     try {
       const response = await resendOtp({ email, channel })
       setCooldown(response.data.resend_available_in)
@@ -108,7 +117,7 @@ export default function VerifyAccountPage() {
       <div className="max-w-md mx-auto text-center">
         <div className="w-14 h-14 rounded-full bg-green-100 text-green-700 grid place-items-center mx-auto mb-5"><Icon name="check" size={28} /></div>
         <h1 className="text-3xl font-extrabold mb-3">You're verified</h1>
-        <p className="text-sm muted mb-7">Your email and phone number are confirmed. Log in to start using Cravio.</p>
+        <p className="text-sm muted mb-7">Your {needsPhone ? 'email and phone number are' : 'email is'} confirmed. Log in to start using Cravio.</p>
         <Link to={loginPath} className="btn-primary w-full !py-4">Go to login <Icon name="arrow" size={18} /></Link>
       </div>
     </main>
@@ -117,10 +126,10 @@ export default function VerifyAccountPage() {
   return <main className="page-shell py-12">
     <div className="max-w-md mx-auto">
       <p className="eyebrow mb-3 text-orange-600">One last step</p>
-      <h1 className="text-3xl font-extrabold mb-3">Verify your email and phone</h1>
+      <h1 className="text-3xl font-extrabold mb-3">{needsPhone ? 'Verify your email and phone' : 'Verify your email'}</h1>
       <p className="text-sm muted mb-7">
         We sent a 6-digit code to {state?.email ? <strong>{state.email}</strong> : 'your email'}
-        {state?.phoneMasked ? <> and another to <strong>{state.phoneMasked}</strong></> : ' and your phone'}.
+        {needsPhone && (state?.phoneMasked ? <> and another to <strong>{state.phoneMasked}</strong></> : ' and your phone')}.
         Codes expire after 5 minutes.
       </p>
 
@@ -132,7 +141,7 @@ export default function VerifyAccountPage() {
           <input className="field mt-2" required type="email" autoComplete="email" maxLength={100}
             value={email} onChange={event => setEmail(event.target.value)} />
         </label>}
-        {['email', 'phone'].map(channel => <CodeField
+        {channels.map(channel => <CodeField
           key={channel}
           label={`${CHANNEL_LABEL[channel]} code`}
           value={codes[channel]}
@@ -148,7 +157,7 @@ export default function VerifyAccountPage() {
         Didn't get a code?{' '}
         {cooldown > 0
           ? <span>Resend available in {cooldown}s</span>
-          : <button type="button" onClick={resend} disabled={!email} className="font-bold text-orange-600">Resend codes</button>}
+          : <button type="button" onClick={resend} disabled={!email} className="font-bold text-orange-600">{needsPhone ? 'Resend codes' : 'Resend code'}</button>}
       </p>
     </div>
   </main>

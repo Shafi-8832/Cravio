@@ -19,14 +19,12 @@
 const crypto = require('crypto')
 const pool = require('../db/pool')
 const { sendEmail, sendSms } = require('./notify')
+const { requiredChannels } = require('../config/verification')
 
 const OTP_TTL_MINUTES = 5
 const MAX_ATTEMPTS = 5
 const RESEND_COOLDOWN_SECONDS = 60
 const MAX_SENDS_PER_HOUR = 5
-
-const CHANNELS = ['email', 'phone']
-
 
 // Fixed SQL per channel. The column name cannot be a $1 parameter in
 // PostgreSQL, so instead of building the string we pick one of two
@@ -209,7 +207,8 @@ async function checkOtp(client, userId, channel, submittedOtp) {
 //
 // Returns null if the email is not a known account (the route answers that
 // with the same message as a wrong code). Otherwise:
-//   { results: { email: {...}, phone: {...} }, emailVerified, phoneVerified }
+//   { results: { email: {...}, phone: {...} }, emailVerified, phoneVerified,
+//     accountVerified }
 // where each result status is 'verified' | 'already_verified' | 'invalid'
 // | 'expired' | 'locked'.
 // ------------------------------------------------------------
@@ -241,7 +240,9 @@ async function verifyAccount(email, codes) {
 
     const results = {}
 
-    for (const channel of CHANNELS) {
+    // Only required channels are checked. With phone OTP switched off
+    // (config/verification.js), a submitted phone code is simply ignored.
+    for (const channel of requiredChannels()) {
       if (!codes[channel]) continue
 
       // An already-verified channel is not checked again — there is no
@@ -255,10 +256,16 @@ async function verifyAccount(email, codes) {
     // be saved, otherwise the attempt limit would never be reached.
     await client.query('COMMIT')
 
+    const verified = {
+      email: alreadyVerified.email || results.email?.status === 'verified',
+      phone: alreadyVerified.phone || results.phone?.status === 'verified'
+    }
+
     return {
       results,
-      emailVerified: alreadyVerified.email || results.email?.status === 'verified',
-      phoneVerified: alreadyVerified.phone || results.phone?.status === 'verified'
+      emailVerified: verified.email,
+      phoneVerified: verified.phone,
+      accountVerified: requiredChannels().every(channel => verified[channel])
     }
   } catch (error) {
     await client.query('ROLLBACK')
@@ -299,9 +306,10 @@ async function resendOtps(email, requested) {
 
     user = userResult.rows[0]
 
-    // Only channels that still need verifying get a new code.
+    // Only required channels that still need verifying get a new code.
     const channels = user
-      ? requested.filter(channel => user[`${channel}_verified_at`] === null)
+      ? requested.filter(channel =>
+          requiredChannels().includes(channel) && user[`${channel}_verified_at`] === null)
       : []
 
     if (channels.length === 0) {

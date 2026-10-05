@@ -49,6 +49,7 @@ export default function AuthForm({ role, signup = false }) {
           phoneMasked: response.data.phone_masked,
           delivery: response.data.delivery,
           resendIn: response.data.resend_available_in,
+          channels: response.data.channels,
           loginPath: `/login/${slug}`,
         } })
         return
@@ -63,7 +64,7 @@ export default function AuthForm({ role, signup = false }) {
       // Right password, but the signup was never finished: send the visitor
       // to the code screen instead of leaving them at a dead end.
       if (err.response?.data?.code === 'ACCOUNT_NOT_VERIFIED') {
-        navigate('/verify', { state: { email: err.response.data.email, loginPath: `/login/${slug}`, unfinished: true } })
+        navigate('/verify', { state: { email: err.response.data.email, channels: err.response.data.channels, loginPath: `/login/${slug}`, unfinished: true } })
         return
       }
       setError(errorMessage(err))

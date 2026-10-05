@@ -43,8 +43,9 @@ you sign in to Render/Vercel with needs access to the repository.
 **Fastest way:** Render → **New → Blueprint** → pick this repository. The
 `render.yaml` file at the repo root fills in every field below, generates
 `JWT_SECRET` and `OTP_HMAC_SECRET`, and asks only for the secrets
-(`DATABASE_URL`, `CORS_ORIGIN`, `BREVO_API_KEY`, `EMAIL_FROM`,
-`BULKSMSBD_API_KEY`, `BULKSMSBD_SENDER_ID`). The manual settings, for a
+(`DATABASE_URL`, `CORS_ORIGIN`, `BREVO_API_KEY`, `EMAIL_FROM`).
+Production starts with `PHONE_OTP_REQUIRED=false` (email-only
+verification), so no SMS account is needed to go live. The manual settings, for a
 service created by hand:
 
 | Field | Value |
@@ -106,9 +107,8 @@ Node version comes from `"engines": { "node": ">=20" }` in
 | `EMAIL_PROVIDER` | `brevo` |
 | `BREVO_API_KEY` | Brevo → SMTP & API → API keys |
 | `EMAIL_FROM` | `Cravio <address-verified-in-brevo>` |
-| `SMS_PROVIDER` | `bulksmsbd` |
-| `BULKSMSBD_API_KEY` | BulkSMSBD dashboard |
-| `BULKSMSBD_SENDER_ID` | your approved sender ID |
+| `PHONE_OTP_REQUIRED` | `false` (email-only verification; set by `render.yaml`) |
+| `SMS_PROVIDER`, `BULKSMSBD_API_KEY`, `BULKSMSBD_SENDER_ID` | only when `PHONE_OTP_REQUIRED=true`: `bulksmsbd`, then your BulkSMSBD key and approved sender ID |
 | `ALLOW_MANUAL_PAYMENTS` | `false` unless you reconcile wallet payments by hand |
 
 Do not set: `PORT` (Render provides it), `TEST_DATABASE_URL`, `AUTH_RATE_LIMIT`,

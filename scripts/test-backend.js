@@ -51,7 +51,7 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 250))
     }
     if (!ready) throw new Error(`Test API failed to start. ${log}`)
-    for (const name of ['e2e.js', 'marketplace.js', 'operations.js', 'tracking.js', 'otp.js']) {
+    for (const name of ['e2e.js', 'marketplace.js', 'operations.js', 'tracking.js', 'otp.js', 'otpEmailOnly.js']) {
       const file = path.join(root, 'backend/tests', name)
       if (fs.existsSync(file)) await run(file, env)
     }

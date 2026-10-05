@@ -11,6 +11,7 @@ const crypto = require('crypto')
 const pool = require('../db/pool')
 const authenticateToken = require('../middleware/auth')
 const otpService = require('../services/otpService')
+const { requiredChannels, isAccountVerified } = require('../config/verification')
 
 const router = express.Router()
 
@@ -246,11 +247,13 @@ router.post('/signup', async (req, res) => {
 
 
     // The account starts unverified (email_verified_at / phone_verified_at
-    // are NULL). One code per channel is created in this same transaction,
-    // so a user row never exists without the codes that can verify it.
-    const codes = {
-      email: await otpService.createOtp(client, user.id, 'email'),
-      phone: await otpService.createOtp(client, user.id, 'phone')
+    // are NULL). One code per REQUIRED channel is created in this same
+    // transaction, so a user row never exists without the codes that can
+    // verify it. (Phone may be switched off — see config/verification.js.)
+    const channels = requiredChannels()
+    const codes = {}
+    for (const channel of channels) {
+      codes[channel] = await otpService.createOtp(client, user.id, channel)
     }
 
 
@@ -264,8 +267,12 @@ router.post('/signup', async (req, res) => {
 
     res.status(201).json({
 
-      message: 'Account created. Enter the codes sent to your email and phone to activate it.',
+      message: channels.includes('phone')
+        ? 'Account created. Enter the codes sent to your email and phone to activate it.'
+        : 'Account created. Enter the code sent to your email to activate it.',
       email: user.email,
+      // Tells the verify screen which code boxes to show.
+      channels,
       phone_masked: otpService.maskPhone(user.phone),
       delivery,
       expires_in_minutes: otpService.OTP_TTL_MINUTES,
@@ -456,13 +463,14 @@ router.post('/login', async (req, res) => {
     // role check above: a stranger must not learn which emails are pending.
     // The response carries a code (not just text) so the frontend can send
     // the visitor to the verification screen instead of showing a dead end.
-    if (user.email_verified_at === null || user.phone_verified_at === null) {
+    if (!isAccountVerified(user)) {
 
       return res.status(403).json({
 
-        error: "Please verify your email and phone number before logging in.",
+        error: "Please verify your account before logging in.",
         code: 'ACCOUNT_NOT_VERIFIED',
-        email: user.email
+        email: user.email,
+        channels: requiredChannels()
 
       })
 
@@ -608,7 +616,8 @@ router.post('/verify-otp', async (req, res) => {
     const body = {
       email_verified: outcome.emailVerified,
       phone_verified: outcome.phoneVerified,
-      account_verified: outcome.emailVerified && outcome.phoneVerified,
+      account_verified: outcome.accountVerified,
+      channels: requiredChannels(),
       results: outcome.results
     }
 
@@ -622,7 +631,7 @@ router.post('/verify-otp', async (req, res) => {
     res.json({
       ...body,
       message: body.account_verified
-        ? 'Email and phone verified. You can now log in.'
+        ? 'Account verified. You can now log in.'
         : 'Code accepted. Enter the remaining code to finish.'
     })
 

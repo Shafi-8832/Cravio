@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken')
 const pool = require('../db/pool')
+const { isAccountVerified } = require('../config/verification')
 
 // A valid signature identifies a session. Database values decide present access.
 const authenticateToken = async (req, res, next) => {
@@ -43,8 +44,8 @@ const authenticateToken = async (req, res, next) => {
 
     // Login already refuses unverified accounts, so this is defence in depth:
     // no route behind this middleware can be reached by an unverified account.
-    if (user.email_verified_at === null || user.phone_verified_at === null) {
-      return res.status(403).json({ error: 'Please verify your email and phone number first.', code: 'ACCOUNT_NOT_VERIFIED' })
+    if (!isAccountVerified(user)) {
+      return res.status(403).json({ error: 'Please verify your account first.', code: 'ACCOUNT_NOT_VERIFIED' })
     }
 
     req.user = { id: user.id, email: user.email, role: user.role, jti: decoded.jti, exp: decoded.exp }

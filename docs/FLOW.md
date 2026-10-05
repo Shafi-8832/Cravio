@@ -2363,6 +2363,7 @@ real reason from the rider.
 
 - `backend/db/migrations/013_account_verification.sql` — the `otp_verifications` table and the two `*_verified_at` columns on `users`
 - `backend/services/otpService.js` — every OTP rule: generate, hash, expire, count attempts, resend cooldown
+- `backend/config/verification.js` — which channels are required (`PHONE_OTP_REQUIRED`)
 - `backend/services/notify/index.js` — picks the email and SMS provider from `.env`
 - `backend/services/notify/brevoEmail.js`, `backend/services/notify/smtpEmail.js`, `backend/services/notify/bulkSmsBd.js`, `backend/services/notify/devOutbox.js` — the providers
 - `backend/routes/auth.js` — signup (creates the unverified account), `/verify-otp`, `/resend-otp`, and the login gate
@@ -2372,7 +2373,7 @@ real reason from the rider.
 - `frontend/src/pages/VerifyAccountPage.jsx` — the two code boxes, Verify button and resend countdown
 - `frontend/src/components/AuthForm.jsx` — sends the visitor to `/verify` after signup, or after a login refused as unverified
 - `frontend/src/services/authApi.js`, `frontend/src/utils/api.js`, `frontend/src/App.jsx` — the API calls and the `/verify` route
-- `backend/tests/otp.js`, `backend/tests/otpHelpers.js` — regression tests
+- `backend/tests/otp.js`, `backend/tests/otpEmailOnly.js`, `backend/tests/otpHelpers.js` — regression tests
 
 ---
 
@@ -2482,6 +2483,14 @@ Brevo's HTTPS API because free hosting often blocks SMTP ports. For development
 there is an `outbox` provider that writes the message to a local file
 (and prints it in the backend terminal) instead of sending it; the server
 refuses to start with it in production.
+
+**Email-only mode (`PHONE_OTP_REQUIRED=false`).** A deployment without an
+SMS gateway account can switch phone verification off with one setting,
+read in `backend/config/verification.js`. Then signup creates and sends
+only the email code, the phone number is saved but stays unverified
+(`phone_verified_at` is NULL), and login and the middleware ask only for
+`email_verified_at`. The switch defaults to ON, so forgetting it can only
+make the rule stricter. Production currently runs with it off.
 
 **Old and seeded accounts.** The migration marks every account that existed
 before it as verified, so nobody was locked out. The seed scripts and

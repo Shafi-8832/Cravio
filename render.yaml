@@ -35,11 +35,10 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
-      - key: SMS_PROVIDER
-        value: bulksmsbd
-      - key: BULKSMSBD_API_KEY
-        sync: false
-      - key: BULKSMSBD_SENDER_ID
-        sync: false
+      # Email-only verification until an SMS gateway account exists. To turn
+      # phone OTP on: set this to "true" and add SMS_PROVIDER=bulksmsbd,
+      # BULKSMSBD_API_KEY and BULKSMSBD_SENDER_ID in the dashboard.
+      - key: PHONE_OTP_REQUIRED
+        value: "false"
       - key: ALLOW_MANUAL_PAYMENTS
         value: "false"
