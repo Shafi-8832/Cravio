@@ -29,15 +29,12 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         sync: false
-      - key: EMAIL_PROVIDER
-        value: brevo
-      - key: BREVO_API_KEY
-        sync: false
-      - key: EMAIL_FROM
-        sync: false
-      # Email-only verification until an SMS gateway account exists. To turn
-      # phone OTP on: set this to "true" and add SMS_PROVIDER=bulksmsbd,
-      # BULKSMSBD_API_KEY and BULKSMSBD_SENDER_ID in the dashboard.
+      # Signup verification is switched off until provider accounts exist.
+      # Email OTP on: set EMAIL_OTP_REQUIRED="true" and add EMAIL_PROVIDER=brevo,
+      # BREVO_API_KEY and EMAIL_FROM. Phone OTP on: PHONE_OTP_REQUIRED="true"
+      # plus SMS_PROVIDER=bulksmsbd, BULKSMSBD_API_KEY, BULKSMSBD_SENDER_ID.
+      - key: EMAIL_OTP_REQUIRED
+        value: "false"
       - key: PHONE_OTP_REQUIRED
         value: "false"
       - key: ALLOW_MANUAL_PAYMENTS

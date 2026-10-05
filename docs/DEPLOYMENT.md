@@ -43,9 +43,11 @@ you sign in to Render/Vercel with needs access to the repository.
 **Fastest way:** Render → **New → Blueprint** → pick this repository. The
 `render.yaml` file at the repo root fills in every field below, generates
 `JWT_SECRET` and `OTP_HMAC_SECRET`, and asks only for the secrets
-(`DATABASE_URL`, `CORS_ORIGIN`, `BREVO_API_KEY`, `EMAIL_FROM`).
-Production starts with `PHONE_OTP_REQUIRED=false` (email-only
-verification), so no SMS account is needed to go live. The manual settings, for a
+(`DATABASE_URL`, `CORS_ORIGIN`). Production starts with signup
+verification switched off (`EMAIL_OTP_REQUIRED=false`,
+`PHONE_OTP_REQUIRED=false`), so no email or SMS account is needed to go
+live. Turn each back on later by setting it to `true` and adding that
+provider's variables. The manual settings, for a
 service created by hand:
 
 | Field | Value |
@@ -104,10 +106,8 @@ Node version comes from `"engines": { "node": ">=20" }` in
 | `JWT_SECRET` | new random value: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `OTP_HMAC_SECRET` | another new random value (same command) |
 | `CORS_ORIGIN` | `https://<your-project>.vercel.app` — exact, no trailing slash; comma-separate to add a custom domain |
-| `EMAIL_PROVIDER` | `brevo` |
-| `BREVO_API_KEY` | Brevo → SMTP & API → API keys |
-| `EMAIL_FROM` | `Cravio <address-verified-in-brevo>` |
-| `PHONE_OTP_REQUIRED` | `false` (email-only verification; set by `render.yaml`) |
+| `EMAIL_OTP_REQUIRED`, `PHONE_OTP_REQUIRED` | `false` and `false` (signup verification off; set by `render.yaml`) |
+| `EMAIL_PROVIDER`, `BREVO_API_KEY`, `EMAIL_FROM` | only when `EMAIL_OTP_REQUIRED=true`: `brevo`, your Brevo API key, `Cravio <address-verified-in-brevo>` |
 | `SMS_PROVIDER`, `BULKSMSBD_API_KEY`, `BULKSMSBD_SENDER_ID` | only when `PHONE_OTP_REQUIRED=true`: `bulksmsbd`, then your BulkSMSBD key and approved sender ID |
 | `ALLOW_MANUAL_PAYMENTS` | `false` unless you reconcile wallet payments by hand |
 

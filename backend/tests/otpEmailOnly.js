@@ -4,10 +4,8 @@
 // strict default (email + phone).
 require('dotenv').config({ quiet: true })
 const assert = require('node:assert/strict')
-const path = require('node:path')
-const { spawn } = require('node:child_process')
 const pool = require('../db/pool')
-const { latestCode, uniquePhone } = require('./otpHelpers')
+const { latestCode, uniquePhone, startApiServer } = require('./otpHelpers')
 
 const port = Number(process.env.PORT || 8011) + 1
 const base = `http://127.0.0.1:${port}`
@@ -26,25 +24,11 @@ async function call(method, route, token, body) {
   return { status: response.status, body: await response.json() }
 }
 
-async function startServer() {
-  // SMS_PROVIDER is removed on purpose: with phone OTP off, the server must
-  // start without any SMS configuration.
-  const env = { ...process.env, PORT: String(port), PHONE_OTP_REQUIRED: 'false' }
-  delete env.SMS_PROVIDER
-  const server = spawn(process.execPath, ['server.js'], { cwd: path.join(__dirname, '..'), env, stdio: 'ignore' })
-  for (let attempt = 0; attempt < 40; attempt++) {
-    try {
-      if ((await fetch(base + '/')).ok) return server
-    } catch { /* still starting */ }
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  server.kill('SIGTERM')
-  throw new Error('Email-only API failed to start')
-}
-
 async function main() {
   if (!/_(test|review)$/.test(new URL(process.env.DATABASE_URL).pathname)) throw new Error('Use npm run test:backend with a separate database.')
-  const server = await startServer()
+  // SMS_PROVIDER is removed on purpose: with phone OTP off, the server must
+  // start without any SMS configuration.
+  const server = await startApiServer(port, { PHONE_OTP_REQUIRED: 'false' }, ['SMS_PROVIDER'])
 
   try {
     const account = { name: 'Email only', email: `email-only-${Date.now()}@example.com`, password: 'testPassword123', role: 'customer', phone: uniquePhone() }

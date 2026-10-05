@@ -267,9 +267,13 @@ router.post('/signup', async (req, res) => {
 
     res.status(201).json({
 
-      message: channels.includes('phone')
-        ? 'Account created. Enter the codes sent to your email and phone to activate it.'
-        : 'Account created. Enter the code sent to your email to activate it.',
+      // channels is [] when verification is switched off: the account is
+      // usable at once and the visitor goes straight to login.
+      message: channels.length === 0
+        ? 'Account created. You can now log in.'
+        : channels.length === 2
+          ? 'Account created. Enter the codes sent to your email and phone to activate it.'
+          : `Account created. Enter the code sent to your ${channels[0]} to activate it.`,
       email: user.email,
       // Tells the verify screen which code boxes to show.
       channels,

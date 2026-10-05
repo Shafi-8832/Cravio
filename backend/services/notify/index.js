@@ -6,7 +6,7 @@ const smtpEmail = require('./smtpEmail')
 const brevoEmail = require('./brevoEmail')
 const bulkSmsBd = require('./bulkSmsBd')
 const devOutbox = require('./devOutbox')
-const { phoneOtpRequired } = require('../../config/verification')
+const { emailOtpRequired, phoneOtpRequired } = require('../../config/verification')
 
 const EMAIL_PROVIDERS = { smtp: smtpEmail, brevo: brevoEmail, outbox: devOutbox.email }
 const SMS_PROVIDERS = { bulksmsbd: bulkSmsBd, outbox: devOutbox.sms }
@@ -27,9 +27,10 @@ function pick(providers, variable) {
 // server immediately instead of failing silently at the first signup.
 function assertNotifyConfig() {
   const problems = []
-  // With phone OTP switched off no SMS is ever sent, so no SMS provider is
+  // A switched-off channel never sends anything, so its provider is not
   // needed (config/verification.js).
-  const checks = [[EMAIL_PROVIDERS, 'EMAIL_PROVIDER']]
+  const checks = []
+  if (emailOtpRequired()) checks.push([EMAIL_PROVIDERS, 'EMAIL_PROVIDER'])
   if (phoneOtpRequired()) checks.push([SMS_PROVIDERS, 'SMS_PROVIDER'])
   for (const [providers, variable] of checks) {
     const { name, provider } = pick(providers, variable)

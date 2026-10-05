@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { signIn, signUp } from '../services/authApi'
 import { errorMessage } from '../utils/format'
@@ -25,6 +25,8 @@ export default function AuthForm({ role, signup = false }) {
   const [busy, setBusy] = useState(false)
   const { login } = useAuth()
   const navigate = useNavigate()
+  // Set when signup sends the visitor here because no verification is needed.
+  const justCreated = useLocation().state?.created
   const accent = ACCENTS[role.accent]
   const slug = slugForRole(role.key)
 
@@ -44,6 +46,11 @@ export default function AuthForm({ role, signup = false }) {
         // the server sends one code by email and one by SMS; the next screen
         // collects them. Nothing secret travels in the router state.
         const response = await signUp({ ...form, role: role.key })
+        // No codes required on this deployment: the account is ready.
+        if (response.data.channels?.length === 0) {
+          navigate(`/login/${slug}`, { state: { created: true } })
+          return
+        }
         navigate('/verify', { state: {
           email: response.data.email,
           phoneMasked: response.data.phone_masked,
@@ -125,6 +132,7 @@ export default function AuthForm({ role, signup = false }) {
           <h1 className="text-3xl font-extrabold mb-3">{signup ? role.signupTitle : role.loginTitle}</h1>
           <p className="text-sm muted mb-7">{signup ? role.signupSubtitle : role.loginSubtitle}</p>
           {error && <p className="notice-error mb-5" role="alert">{error}</p>}
+          {!error && justCreated && !signup && <p className="notice-success mb-5" role="status">Account created. Log in to start using Cravio.</p>}
 
           <form onSubmit={submit} className="space-y-4">
             {signup && field('name', 'Your name', 'text', 'Full name', 'name')}
