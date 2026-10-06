@@ -569,8 +569,8 @@ Cravio/
 <table>
   <tr>
     <td align="center" width="50%">
-      <b>Md Atik Khan</b><br />
-      <a href="[MY GITHUB]">GitHub</a>
+      <b>Atik Khan</b><br />
+      <a href="https://github.com/atikdevx">GitHub</a>
     </td>
     <td align="center" width="50%">
       <a href="https://github.com/Shafi-8832"><img src="https://github.com/Shafi-8832.png" width="80" alt="" style="border-radius:50%" /></a><br />
